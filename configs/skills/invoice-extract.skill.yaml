@@ -1,0 +1,24 @@
+skill_id: invoice-extract
+version: 1.0.0
+name: Invoice Extraction
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write: []
+  tools:
+  - pdf_extract
+  - db_query
+  model:
+    outbound: true
+    purposes:
+    - vision
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: GoTC3u/D6xDASffvUxV5wMVhk8EhXybpZcOnTLHRX5y8LIY/6dlWU7D0zk+cpWss8QQ8bI+bb0jgPFPOQ0awCw==

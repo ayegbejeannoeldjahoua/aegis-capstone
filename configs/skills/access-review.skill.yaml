@@ -1,0 +1,23 @@
+skill_id: access-review
+version: 1.0.0
+name: Access Review
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: team-decisions
+    write: []
+  tools:
+  - db_query
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: Bc2n4i0JySeB0wk9KEg6P8P/Rx5CFWdqIyN40v2Wmd+nJiYyHjRuPmvCnqnokHpxDhxOoERb0Z1UlBpZ5Q31BA==

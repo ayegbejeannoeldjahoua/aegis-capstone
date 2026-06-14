@@ -1,0 +1,347 @@
+/* Tailwind directives — emit utility classes used by the ported Dashboard /
+   FinOps / Runs / PolicyExplorer pages. Our hand-authored Aegis theme below
+   continues to define the global components. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Aegis AI Governance Platform — dark slate theme matching the Aegis brand. */
+:root {
+  /* Aegis palette: deep slate background, blue-600 accents, white text */
+  --bg-deep:    #0f172a;
+  --bg-panel:   #1e293b;
+  --bg-card:    #1e293b;
+  --bg-elev:    #334155;
+  --line:       #334155;
+  --line-soft:  rgba(148, 163, 184, .15);
+  --text:       #f1f5f9;
+  --muted:      #94a3b8;
+  --dim:        #64748b;
+
+  --blue:       #2563eb;
+  --blue-strong:#1d4ed8;
+  --blue-soft:  #1e3a8a;
+  --emerald:    #10b981;
+  --amber:      #f59e0b;
+  --rose:       #f43f5e;
+  --violet:     #8b5cf6;
+
+  /* legacy aliases used by inherited components */
+  --navy:  var(--blue);
+  --bg:    var(--bg-deep);
+  --card:  var(--bg-card);
+  --deny:  var(--rose);
+  --ok:    var(--emerald);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(1200px 800px at 20% -10%, rgba(37,99,235,.18) 0%, transparent 60%),
+    radial-gradient(1000px 700px at 110% 110%, rgba(139,92,246,.15) 0%, transparent 60%),
+    var(--bg-deep);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.fatal { padding: 40px; color: var(--rose); font-size: 18px; max-width: 800px; margin: 0 auto; }
+
+/* ---------- Top bar ---------- */
+.topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 24px;
+  background: rgba(15, 23, 42, .85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 10;
+}
+.brand {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 10px;
+}
+.brand::before {
+  content: ""; display: inline-block; width: 28px; height: 28px;
+  background: var(--blue);
+  clip-path: polygon(50% 0, 100% 22%, 100% 60%, 50% 100%, 0 60%, 0 22%);
+  box-shadow: 0 6px 18px -4px rgba(37,99,235,.55);
+}
+.brand span {
+  display: block; font-size: 11px; font-weight: 500;
+  color: var(--muted); letter-spacing: .14em; text-transform: uppercase;
+  margin-left: 38px; margin-top: -22px;
+}
+.who { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+.role-badge {
+  background: rgba(37, 99, 235, .15);
+  color: #93c5fd;
+  border: 1px solid rgba(37, 99, 235, .35);
+  padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  letter-spacing: .04em;
+}
+
+/* ---------- Buttons ---------- */
+button {
+  background: var(--blue); color: #fff; border: 0;
+  padding: 9px 16px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 600; letter-spacing: .01em;
+  transition: background .15s, transform .05s;
+}
+button:hover { background: var(--blue-strong); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button.ghost {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--line);
+}
+button.ghost:hover { background: rgba(148, 163, 184, .1); }
+button.danger { background: var(--rose); }
+button.danger:hover { background: #e11d48; }
+
+/* ---------- Home (landing) ---------- */
+.home { min-height: 100vh; }
+.home-cards {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+  max-width: 1100px; margin: 60px auto; padding: 0 24px;
+}
+.home-card {
+  background: var(--bg-card); border: 1px solid var(--line);
+  border-radius: 16px; padding: 36px;
+  text-align: left; color: var(--text); cursor: pointer;
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.home-card:hover {
+  border-color: var(--blue); transform: translateY(-2px);
+  box-shadow: 0 16px 40px -16px rgba(37,99,235,.4);
+}
+.home-card h2 { margin: 0; font-size: 22px; color: var(--text); }
+.home-card p { color: var(--muted); margin: 0; line-height: 1.55; font-size: 14px; }
+.home-card .cta { color: var(--blue); font-weight: 600; font-size: 13px; margin-top: 12px; }
+
+/* ---------- Console (admin) ---------- */
+.console { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 240px;
+  background: rgba(30, 41, 59, .9);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; padding: 22px 14px;
+  gap: 8px;
+}
+.sidebar .brand { padding: 0 8px 16px; border-bottom: 1px solid var(--line-soft); margin-bottom: 8px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 4px; }
+.sidebar nav button {
+  background: transparent; color: var(--muted); border: 0; border-radius: 8px;
+  text-align: left; padding: 10px 14px; font-size: 13px; font-weight: 500;
+}
+.sidebar nav button:hover { background: rgba(148, 163, 184, .08); color: var(--text); }
+.sidebar nav button.active {
+  background: var(--blue); color: #fff;
+  box-shadow: 0 4px 14px -4px rgba(37,99,235,.6);
+}
+.sidebar .admin-token { margin-top: auto; font-size: 11px; color: var(--muted); }
+.sidebar .admin-token label { color: var(--muted); font-size: 11px; }
+.sidebar .admin-token small { color: var(--dim); font-size: 10px; }
+.main { flex: 1; padding: 28px 32px; max-width: 1500px; }
+
+/* ---------- Cards / forms / tables ---------- */
+.card {
+  background: var(--bg-card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 22px;
+  margin-bottom: 18px;
+}
+.card h2 { margin: 0 0 14px; font-size: 16px; font-weight: 600; color: var(--text); letter-spacing: .01em; }
+.card p, .card .muted { color: var(--muted); }
+.muted { color: var(--muted); }
+code {
+  background: rgba(148, 163, 184, .12);
+  color: #c7d2fe; padding: 2px 7px; border-radius: 5px;
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px;
+}
+
+label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+label.row { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+input, textarea, select {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+  font-size: 13px; font-family: inherit;
+  background: var(--bg-deep); color: var(--text);
+}
+input:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .25);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 12px; color: var(--muted); font-weight: 600; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+td { text-align: left; padding: 12px; border-bottom: 1px solid var(--line-soft); color: var(--text); }
+tr:hover td { background: rgba(148, 163, 184, .04); }
+tr.active-row td { background: rgba(37, 99, 235, .1); }
+
+/* ---------- Status / messages ---------- */
+.error, .deny {
+  background: rgba(244, 63, 94, .12); color: #fda4af;
+  border: 1px solid rgba(244, 63, 94, .3); border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; margin-bottom: 12px;
+}
+.ok-msg {
+  background: rgba(16, 185, 129, .12); color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, .3); border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; margin-bottom: 12px;
+}
+
+/* ---------- Chat ---------- */
+.chat { display: flex; flex-direction: column; min-height: 100vh; }
+.chat-log { flex: 1; padding: 28px; max-width: 920px; width: 100%; margin: 0 auto; overflow-y: auto; }
+.chat-empty { padding: 60px 20px; text-align: center; color: var(--muted); }
+.bubble {
+  background: var(--bg-card); border: 1px solid var(--line);
+  padding: 14px 18px; border-radius: 14px;
+  margin: 10px 0; max-width: 80%; line-height: 1.55;
+  font-size: 14px; color: var(--text);
+}
+.bubble.user {
+  background: var(--blue); color: #fff;
+  margin-left: auto; border-color: var(--blue);
+}
+.bubble.assistant { margin-right: auto; }
+.bubble.error { background: rgba(244, 63, 94, .12); border-color: rgba(244, 63, 94, .3); color: #fda4af; }
+.bubble-body { white-space: pre-wrap; }
+.bubble-meta { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; }
+.bubble-docs { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); }
+.bubble-docs ul { margin: 6px 0 0; padding-left: 18px; }
+.chat-input {
+  display: flex; gap: 10px; padding: 18px 28px;
+  background: var(--bg-panel); border-top: 1px solid var(--line);
+  max-width: 920px; width: 100%; margin: 0 auto;
+}
+.chat-input input { flex: 1; }
+
+/* ---------- Tabs / pills ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.tab {
+  background: transparent; color: var(--muted); border: 0; padding: 10px 16px;
+  border-radius: 0; border-bottom: 2px solid transparent; font-size: 13px;
+}
+.tab.active { color: var(--text); border-bottom-color: var(--blue); }
+
+/* ---------- Utilities ---------- */
+.flex { display: flex; gap: 8px; align-items: center; }
+.spacer { flex: 1; }
+.small { font-size: 12px; color: var(--muted); }
+.active-row { background: rgba(37, 99, 235, .08); }
+
+/* ============================================================
+   Wide-screen layout polish - use the full viewport on big screens,
+   give each page a proper header, and make cards feel intentional.
+   ============================================================ */
+.main {
+  max-width: none;
+  width: 100%;
+  padding: 28px 40px;
+}
+@media (min-width: 1400px) { .main { padding: 32px 56px; } }
+@media (min-width: 1800px) { .main { padding: 36px 80px; } }
+
+.page-header {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  margin: 0 0 22px 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.page-header h1 {
+  margin: 0; font-size: 22px; font-weight: 700; color: var(--text);
+  letter-spacing: -0.01em;
+}
+.page-header .subtitle { color: var(--muted); font-size: 13px; max-width: 700px; }
+.page-header .actions { display: flex; gap: 8px; }
+
+.card {
+  background: linear-gradient(180deg, rgba(30,41,59,.95) 0%, rgba(30,41,59,.80) 100%);
+  border-radius: 14px;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.card:hover { border-color: rgba(37, 99, 235, .35); }
+.card h2 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 16px; font-weight: 600;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-soft);
+  margin: -2px 0 16px;
+}
+
+.grid2 { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 1100px) { .grid2 { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1600px) { .grid2 { grid-template-columns: 2fr 1fr; } }
+
+.grid3 { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 900px)  { .grid3 { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1300px) { .grid3 { grid-template-columns: 1fr 1fr 1fr; } }
+
+.grid4 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (min-width: 1100px) { .grid4 { grid-template-columns: 1fr 1fr 1fr 1fr; } }
+
+.section-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  margin: 24px 0 10px;
+}
+
+.stat {
+  background: rgba(15, 23, 42, .55);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+.stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.stat .value { color: var(--text); font-size: 24px; font-weight: 700; margin-top: 4px; }
+.stat .delta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.stat .delta.up   { color: #6ee7b7; }
+.stat .delta.down { color: #fda4af; }
+
+table { width: 100%; }
+@media (min-width: 1400px) {
+  th { padding: 14px 18px; }
+  td { padding: 16px 18px; }
+}
+
+@media (min-width: 1400px) {
+  label { gap: 8px; }
+  input, textarea, select { padding: 12px 14px; font-size: 14px; }
+}
+
+.app > main { min-width: 0; }
+.content { width: 100%; }
+
+/* ============================================================
+   Console layout — .app wraps the sidebar + main as a flex row.
+   This was the missing piece that left a huge empty area at the
+   top of each admin page.
+   ============================================================ */
+.app {
+  display: flex;
+  min-height: 100vh;
+  align-items: stretch;
+}
+.app > main {
+  flex: 1;
+  min-width: 0;             /* let flexbox shrink the main column */
+  display: flex;
+  flex-direction: column;
+}
+.app > main > .content,
+.app > main > section.content {
+  flex: 1;
+  padding: 28px 40px;
+}
+@media (min-width: 1400px) { .app > main > .content { padding: 32px 56px; } }
+@media (min-width: 1800px) { .app > main > .content { padding: 36px 80px; } }
+
+/* Sidebar height fills the viewport */
+.app > .sidebar { height: auto; min-height: 100vh; flex-shrink: 0; }
+
+/* Topbar stays at the top of the main column (full-width across main) */
+.app > main > .topbar { padding: 16px 32px; }
+

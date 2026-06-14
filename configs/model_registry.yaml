@@ -1,0 +1,66 @@
+version: 1
+selection:
+  # Global default model. NOTE: the yaml loader does NOT expand ${ENV} placeholders, so this
+  # must be a literal id. The platform admin can change the live default at runtime from the
+  # Models console tab (stored in platform_settings) — no redeploy. SAF_DEFAULT_MODEL overrides
+  # this literal at boot if set.
+  default_model: openai/gpt-4.1
+  # No cost-aware cross-provider fallback by default: a hosted model that errors fails visibly
+  # rather than silently switching providers. Add ids here to opt into a fallback chain.
+  fallbacks: []
+  allow_user_selection: true
+  fail_visible_for_user_pinned_model: true
+  auto_recover_primary_after_seconds: 600
+
+# Three hosted models only (no local/Ollama in this deployment). Model risk-tier gating was
+# removed in v1.15.0 ("no tiers in model use"): any role can use any registered model, and any
+# model can be set as the global default. risk_tiers below are retained for display only and are
+# NOT enforced in routing. Per-role governance (classification ceilings, skills, tools, egress,
+# token/request budgets) still applies on top.
+providers:
+  openai:
+    type: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_secret_env: OPENAI_API_KEY
+    region: AC1
+    local: false
+    models:
+      - id: openai/gpt-4.1
+        aliases: [hosted-strong, default]
+        supports_tools: true
+        supports_images: true
+        risk_tiers: [T1, T2, T3]
+        max_input_tokens: 128000
+
+  nvidia:
+    type: openai_compatible
+    base_url_env: NVIDIA_BASE_URL
+    api_key_secret_env: NVIDIA_API_KEY
+    region: AC1
+    local: false
+    models:
+      - id: nvidia/nemotron-3-super-120b-a12b
+        aliases: [enterprise-reasoning]
+        supports_tools: true
+        supports_images: false
+        risk_tiers: [T1, T2, T3]
+        max_input_tokens: 128000
+
+  anthropic:
+    type: anthropic
+    base_url_env: ANTHROPIC_BASE_URL
+    api_key_secret_env: ANTHROPIC_API_KEY
+    region: AC1
+    local: false
+    models:
+      - id: anthropic/claude-sonnet-4-6
+        aliases: [claude-sonnet, claude]
+        supports_tools: true
+        supports_images: true
+        risk_tiers: [T1, T2, T3]
+        max_input_tokens: 200000
+
+routing_policies:
+  - name: ac1-residency
+    require:
+      region: AC1

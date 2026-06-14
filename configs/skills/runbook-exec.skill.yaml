@@ -1,0 +1,23 @@
+skill_id: runbook-exec
+version: 1.0.0
+name: Runbook Execution
+risk_tier: T3
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: team-decisions
+    write: []
+  tools:
+  - code_exec
+  model:
+    outbound: true
+    purposes:
+    - code
+  runtime:
+    sandbox_required: true
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: kcpMJbb1u2vr3jIG+ehdALuWilU21jC6Rp8WC0vefKrAgTV2nXG7qsaSFkVwctiDWVeVeQXt+nikPxp7iNHOBw==

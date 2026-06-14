@@ -1,0 +1,98 @@
+#cloud-config
+# Cloud-init for the Aegis GCP VM (Cloud Shell + Git workflow).
+#
+# Runs once on first boot. Installs Docker + git, opens the firewall,
+# clones the project repo, and registers a systemd unit that starts the
+# stack as soon as /etc/aegis/env is in place.
+#
+# The repo URL and (optional) branch are read from VM metadata, which
+# deploy.sh writes during VM creation. Look for `AEGIS_REPO` and
+# `AEGIS_BRANCH` below.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+  - jq
+  - ufw
+
+runcmd:
+  # ---------- Docker ----------
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+
+  # ---------- Firewall: only Caddy ports + SSH ----------
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+
+  # ---------- Layout ----------
+  - mkdir -p /etc/aegis /opt/aegis
+  - chmod 750 /etc/aegis
+  - touch /etc/aegis/env
+  - chmod 600 /etc/aegis/env
+
+  # ---------- Clone the project ----------
+  # Repo URL and branch come from VM instance metadata. deploy.sh sets these
+  # with `--metadata AEGIS_REPO=... AEGIS_BRANCH=...`.
+  - |
+    REPO=$(curl -fsS -H 'Metadata-Flavor: Google' \
+      http://metadata.google.internal/computeMetadata/v1/instance/attributes/AEGIS_REPO || echo "")
+    BRANCH=$(curl -fsS -H 'Metadata-Flavor: Google' \
+      http://metadata.google.internal/computeMetadata/v1/instance/attributes/AEGIS_BRANCH || echo main)
+    if [ -n "$REPO" ]; then
+      git clone --depth 1 --branch "$BRANCH" "$REPO" /opt/aegis/aegis_platform || \
+        git clone --depth 1 "$REPO" /opt/aegis/aegis_platform
+    else
+      echo "AEGIS_REPO metadata missing; skipping clone (you'll need to upload source manually)" >&2
+    fi
+
+  # ---------- systemd unit that starts the stack once the env file is ready ----------
+  - |
+    cat > /etc/systemd/system/aegis.service <<'UNIT'
+    [Unit]
+    Description=Aegis AI Governance Platform
+    Requires=docker.service
+    After=docker.service network-online.target
+    ConditionPathExists=/etc/aegis/env
+    ConditionPathExists=/opt/aegis/aegis_platform/docker-compose.yml
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    WorkingDirectory=/opt/aegis/aegis_platform
+    EnvironmentFile=/etc/aegis/env
+    ExecStart=/usr/bin/docker compose -f docker-compose.yml -f deploy/gcp/docker-compose.production.yml up -d --build
+    ExecStop=/usr/bin/docker compose -f docker-compose.yml -f deploy/gcp/docker-compose.production.yml down
+    TimeoutStartSec=1800
+    [Install]
+    WantedBy=multi-user.target
+    UNIT
+  - systemctl daemon-reload
+  - systemctl enable aegis.service
+  # NOTE: the unit will NOT start yet because /etc/aegis/env is empty.
+  # deploy.sh writes the env file via scp, then `systemctl start aegis`.
+
+  # ---------- Marker ----------
+  - touch /opt/aegis/.bootstrap.done
+
+write_files:
+  - path: /etc/sysctl.d/99-aegis.conf
+    permissions: '0644'
+    content: |
+      fs.inotify.max_user_watches=524288
+      net.core.somaxconn=4096

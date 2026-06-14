@@ -1,0 +1,72 @@
+# SAF edge reverse proxy (v1.19.3).
+#
+# Caddy auto-issues a Let's Encrypt TLS certificate for the public hostname.
+# Change the hostname by editing SAF_PUBLIC_HOSTNAME in .env -- nothing else.
+#
+# Routing:
+#   /config.js   -> dynamic runtime config (overrides the dev-time fallback)
+#   /realms/*    -> keycloak (OIDC login, token, userinfo, etc.)
+#   /resources/* -> keycloak (KC login-page static assets)
+#   /v1/*        -> SAF api (governed runtime + chat + me)
+#   /admin/*     -> SAF api (governance + audit + values + bootstrap)
+#   /health, /ready, /openapi.json, /docs -> SAF api
+#   everything else -> frontend SPA
+
+{$SAF_PUBLIC_HOSTNAME:localhost} {
+    encode gzip zstd
+
+    # ---- Runtime config (overrides the dev-time public/config.js shipped in
+    # the frontend image, which hardcodes localhost:8080/8081). The SPA loads
+    # this BEFORE its main bundle and reads window.SAF_CONFIG.
+    handle /config.js {
+        header Content-Type "application/javascript; charset=utf-8"
+        header Cache-Control "no-cache, no-store, must-revalidate"
+        respond `window.SAF_CONFIG = {"API_BASE":"https://{$SAF_PUBLIC_HOSTNAME}","KEYCLOAK_URL":"https://{$SAF_PUBLIC_HOSTNAME}","REALM":"sentinel","CLIENT_ID":"sentinel-cli"};`
+    }
+
+    # SAF api
+    handle /v1/* {
+        reverse_proxy api:8080
+    }
+    handle /admin/* {
+        reverse_proxy api:8080
+    }
+    handle /health {
+        reverse_proxy api:8080
+    }
+    handle /ready {
+        reverse_proxy api:8080
+    }
+    handle /openapi.json {
+        reverse_proxy api:8080
+    }
+    handle /docs* {
+        reverse_proxy api:8080
+    }
+
+    # Keycloak public OIDC endpoints + login-page assets
+    handle /realms/* {
+        reverse_proxy keycloak:8080 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host {host}
+        }
+    }
+    handle /resources/* {
+        reverse_proxy keycloak:8080 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host {host}
+        }
+    }
+
+    # Default: serve the SPA
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    # Reasonable security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}

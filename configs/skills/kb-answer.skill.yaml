@@ -1,0 +1,23 @@
+skill_id: kb-answer
+version: 1.0.0
+name: Knowledge-Base Answer
+risk_tier: T1
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write: []
+  tools:
+  - kb_search
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: kG0xwHIWoDzMjMH1l2peyCgD194QKwqw7BHvMKE5sYBNXgkAlIbtnK/3/P5Ru0rbYwc5VpSfngCsml6nL6rgAA==

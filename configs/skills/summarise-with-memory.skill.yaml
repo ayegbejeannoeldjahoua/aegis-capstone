@@ -1,0 +1,30 @@
+skill_id: summarise-with-memory
+version: 1.0.0
+name: Summarise with Governed Memory
+risk_tier: T2 Governed Speed
+entrypoint: sentinel_fabric.workflow:run_summarise_with_memory
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write:
+    - namespace: analyst-notes
+  tools:
+  - external_lookup
+  model:
+    outbound: true
+    purposes:
+    - summarization
+  runtime:
+    sandbox_required: true
+    network: none
+role_enablement:
+  acme-corp:
+    analyst: true
+    lead: true
+    viewer: false
+  beta-corp:
+    analyst: true
+signature:
+  algorithm: ed25519
+  value: QtdLjSa1vPneuqzQTpPyP5nZqjyrViaRQcAWPRZ5qagysKYIWSSX9l9AI6GHFxbkxDQXCuzEk+6xnz8z2eh6AQ==

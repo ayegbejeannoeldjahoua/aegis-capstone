@@ -1,0 +1,22 @@
+skill_id: audit-digest
+version: 1.0.0
+name: Audit Digest
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: team-decisions
+    write: []
+  tools: []
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: 9pBjQV4MMd2I0Qlon36YIyFW5sqmx+b8N30hDPeICosoXxnF6UUDtriVXrYz24reoOiivJnDI/2fTa3oiZKeDA==

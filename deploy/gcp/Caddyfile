@@ -1,0 +1,61 @@
+# Caddy reverse proxy for the Aegis GCP deployment.
+#
+# Single domain (a nip.io hostname tied to the VM's public IP) serves three
+# upstreams via path routing:
+#
+#   /              -> frontend  (vite-built static site on :5173)
+#   /api/*         -> api       (FastAPI on :8080)  -- the leading /api is stripped
+#   /auth/*        -> keycloak  (Keycloak on :8081)
+#
+# TLS is automatic via Let's Encrypt. The DOMAIN env var is templated by
+# deploy.sh after the VM has a public IP (e.g. aegis-34-123-45-67.nip.io).
+
+{
+    # Global options.
+    email {$ACME_EMAIL}
+    # Uncomment for Let's Encrypt staging during testing (no rate limits):
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+    encode zstd gzip
+
+    # --- Keycloak (must come before the catch-all /) -----------------------
+    # We mount Keycloak under /auth so it shares one TLS cert with the rest.
+    # Keycloak's KC_HTTP_RELATIVE_PATH=/auth aligns its internal links too.
+    handle_path /auth/* {
+        reverse_proxy keycloak:8080 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host  {host}
+            header_up X-Forwarded-Port  443
+        }
+    }
+
+    # --- API ---------------------------------------------------------------
+    # The frontend calls /api/* -- Caddy strips the prefix before forwarding,
+    # so the api sees the original routes (/v1/ask, /admin/*, /health).
+    handle_path /api/* {
+        reverse_proxy api:8080 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host  {host}
+            header_up X-Forwarded-Port  443
+        }
+    }
+
+    # --- Frontend (default) -----------------------------------------------
+    # The Vite dev server is fine for a demo. For production you could swap
+    # this for `root * /srv/frontend-dist; file_server` after running
+    # `npm run build`.
+    handle {
+        reverse_proxy frontend:5173
+    }
+
+    # Basic security headers; tweak as you like.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Allow Keycloak iframes (it uses them for silent SSO refresh)
+        Content-Security-Policy "frame-ancestors 'self'"
+    }
+}

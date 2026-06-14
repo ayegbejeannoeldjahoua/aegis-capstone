@@ -1,0 +1,27 @@
+skill_id: firstprinciples
+version: 1.0.0
+name: First Principles
+risk_tier: T1 Thinking
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+description: First-principles decomposition. Strips a problem to its underlying primitives,
+  names the load-bearing assumptions, then rebuilds a minimal answer from them.
+prompt_preamble: Decompose the question to its load-bearing primitives. State each
+  primitive and the assumption it carries. Identify which assumptions are weakest.
+  Rebuild a minimal answer using only the primitives you trust. Flag explicitly what
+  your answer DOESN'T address.
+capabilities:
+  memory:
+    read: []
+    write: []
+  tools: []
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: qAwXaAaZFpd5eborGWUZFSBVHYY54nMvwz+XR5Qwa1cZ2NHclt7sSNo0sRM1aSNFQug/6jGvhRM3mGqbrSEJBg==

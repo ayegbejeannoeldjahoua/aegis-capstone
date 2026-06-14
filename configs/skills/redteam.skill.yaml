@@ -1,0 +1,27 @@
+skill_id: redteam
+version: 1.0.0
+name: Red Team
+risk_tier: T1 Thinking
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+description: Adversarial analysis. Stress-tests a proposal or claim by enumerating
+  the most plausible failure modes, hidden assumptions, and counterarguments.
+prompt_preamble: Adopt the role of a skeptical red-team reviewer. List the strongest
+  objections to the user's proposal/claim, ranked by likelihood and impact. Be specific
+  (not 'this might fail' but 'this fails when X'). End with the single risk most worth
+  mitigating before proceeding.
+capabilities:
+  memory:
+    read: []
+    write: []
+  tools: []
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: 5PHFkVflXpxpxHOZp1YfWQrMLYLtHb9dMOEEdHjtPfEMcvd08OyiU3Ioz/vUG490HKvnZwNRDGJHvOvZc9a7Bg==

@@ -1,0 +1,25 @@
+skill_id: meeting-notes
+version: 1.0.0
+name: "Meeting Notes \u2192 Decisions"
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    - namespace: team-decisions
+    write:
+    - namespace: team-decisions
+  tools:
+  - vector_recall
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: gtXdZdpzPzdwER6MQEqk9nJSSJafUxZrYvEv5qhwmjzkz2OY+fJF/udzSlKjWugZcybM9PsIZwrdceaOvcnNBg==

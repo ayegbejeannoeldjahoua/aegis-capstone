@@ -1,0 +1,25 @@
+version: 1
+channels:
+  api:
+    enabled: true
+    auth: oidc_bearer
+    dm_policy: oidc_only
+  websocket:
+    enabled: true
+    auth: oidc_bearer
+    dm_policy: oidc_only
+  slack:
+    enabled: false
+    auth: oauth_installation
+    dm_policy: pairing
+    allow_groups: []
+  msteams:
+    enabled: false
+    auth: enterprise_app_registration
+    dm_policy: pairing
+    allow_groups: []
+security_defaults:
+  unknown_sender: reject_or_pair
+  group_activation: mention_required
+  inbound_content_trusted: false
+  all_actions_recheck_pdp: true

@@ -1,0 +1,25 @@
+skill_id: qa-over-docs
+version: 1.0.0
+name: Q&A over Documents
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write: []
+  tools:
+  - kb_search
+  - doc_retrieve
+  - vector_recall
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: +UxxzJfhRyyFoXAhmEB5/yU0IgOj/da80VwD1ZVPJbulow/7KMGTu+DwmdBZjxvAAsPdccbJZ46mJUSNsSl9Bw==

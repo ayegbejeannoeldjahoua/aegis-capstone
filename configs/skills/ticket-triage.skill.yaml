@@ -1,0 +1,24 @@
+skill_id: ticket-triage
+version: 1.0.0
+name: Ticket Triage
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write: []
+  tools:
+  - kb_search
+  - crm_lookup
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: XOEErwDltXPGxEQz3+pQvDOcXzdjcqY1UTf8Qcq+gZPtERjFMwG+hgM76bKEEXGv/FuEtyy4I0JAoGTHAizCAA==

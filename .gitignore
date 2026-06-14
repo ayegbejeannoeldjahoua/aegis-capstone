@@ -1,0 +1,30 @@
+# Secrets / local env
+.env
+*.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+deploy/keys/*.key
+
+# GCP deployment secrets
+deploy/gcp/.env.production
+deploy/gcp/.env.production.bak

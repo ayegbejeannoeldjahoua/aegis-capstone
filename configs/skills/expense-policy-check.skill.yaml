@@ -1,0 +1,24 @@
+skill_id: expense-policy-check
+version: 1.0.0
+name: Expense Policy Check
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write: []
+  tools:
+  - db_query
+  - calculator
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: CfGBbiwerYFEaYuHoNyWAiTORqH8wGwRfK2yPkK16jhGFVVgYQ6SV8B15TlTeASljLXdaeZOsFCNzF9iO/+6Dw==

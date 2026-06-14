@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+# Minimal sandbox image. In production, pin by digest and scan/SBOM this image.
+RUN groupadd -g 10001 cell && useradd -m -u 10001 -g 10001 -s /bin/bash cell \
+    && mkdir -p /workspace /tmp/cell \
+    && chown -R cell:cell /workspace /tmp/cell
+USER 10001:10001
+WORKDIR /workspace
+ENV HOME=/tmp/cell PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENTRYPOINT ["/bin/bash", "-lc"]
+CMD ["python - <<'PY'\nprint('runtime cell ready')\nPY"]

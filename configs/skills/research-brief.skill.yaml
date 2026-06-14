@@ -1,0 +1,26 @@
+skill_id: research-brief
+version: 1.0.0
+name: Research Brief
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write:
+    - namespace: analyst-notes
+  tools:
+  - web_search
+  - web_fetch
+  - kb_search
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: yFRXmKI4byrnG8rNpcO20eidXmeFfcMLc+FiIo41g9QjmoVudrrM/VW3qhuqcRc9AvwA1Da+TLs6/blCDXKRCQ==

@@ -1,0 +1,25 @@
+version: 1
+profile_id: default-hardened-cell
+image: aegis-runtime-cell:latest
+image_digest_required: true
+runtime:
+  backend: docker
+  user: "10001:10001"
+  read_only_root: true
+  network_mode: none
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  pids_limit: 128
+  mem_limit: 512m
+  cpu_quota: 100000
+filesystem:
+  workspace_mount: /workspace
+  workspace_mode: read-write-request-scoped
+secrets:
+  injection: env-request-scoped
+  long_lived_inside_cell: false
+telemetry:
+  emit_lifecycle_events: true

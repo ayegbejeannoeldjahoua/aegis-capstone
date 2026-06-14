@@ -1,0 +1,24 @@
+skill_id: incident-summary
+version: 1.0.0
+name: Incident Summary
+risk_tier: T3
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: team-decisions
+    write: []
+  tools:
+  - db_query
+  - web_fetch
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: lssMpVMiebx8IZROx5uAPFKD9aTZn965L4e+X+xIT4mrsJhqPzcHvx5CVrr6sjWEQTlZCVnfpLU8KCfu3cMoAg==

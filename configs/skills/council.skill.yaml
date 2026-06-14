@@ -1,0 +1,28 @@
+skill_id: council
+version: 1.0.0
+name: Council
+risk_tier: T1 Thinking
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+description: Multi-perspective review. Reasons through a question by simulating three
+  distinct expert perspectives in turn, then reconciles differences. Use for decisions
+  with multiple legitimate framings.
+prompt_preamble: 'Take three distinct expert perspectives on the question (label each).
+  For each, give the strongest defensible view in 2-4 sentences. Then synthesize:
+  what they agree on, where they conflict, and which framing best serves the user''s
+  stated goal.'
+capabilities:
+  memory:
+    read: []
+    write: []
+  tools: []
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: 0hwMYgrofusGyW6tuPKsM+FaykuAMZmPqpmGvnzNims9oavbptD398F4v7I3JRRPt2B34DrZQPlsB4eaPd9nAQ==

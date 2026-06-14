@@ -1,0 +1,112 @@
+# Production overrides for the GCP VM deployment.
+#
+# Layered on top of the base docker-compose.yml at the project root:
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f deploy/gcp/docker-compose.production.yml \
+#     up -d
+#
+# What's different from the local-dev compose:
+#
+#   1. Adds a `caddy` service that's the only port-exposed container.
+#      Everything else is on the internal aegis network only.
+#   2. Removes host port bindings on api/frontend/keycloak so the public
+#      internet can't bypass Caddy and hit them directly.
+#   3. Sets restart: unless-stopped on every long-lived service.
+#   4. Switches the api / frontend / keycloak env to public URLs derived
+#      from DOMAIN (defined in /etc/aegis/env).
+#
+# Secrets (admin tokens, OpenAI key, Keycloak admin password, DB passwords)
+# come from the env file -- see .env.production.example.
+
+services:
+  # ------------------------------------------------------------------
+  # Caddy: TLS termination + path-based reverse proxy + auto-renew certs
+  # ------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: aegis-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN:     ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./deploy/gcp/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - api
+      - keycloak
+    networks:
+      - aegis
+
+  # ------------------------------------------------------------------
+  # API: drop the public 8080 binding, set PUBLIC_BASE_URL + CORS for prod
+  # ------------------------------------------------------------------
+  api:
+    restart: unless-stopped
+    # Override the ports block from the base file (empty = internal only).
+    ports: []
+    environment:
+      AEGIS_ENV:               production
+      AEGIS_PUBLIC_BASE_URL:   https://${DOMAIN}/api
+      AEGIS_CORS_ORIGINS:      https://${DOMAIN}
+      OIDC_ISSUER:             http://keycloak:8080/auth/realms/aegis
+      OIDC_PUBLIC_ISSUER:      https://${DOMAIN}/auth/realms/aegis
+      AEGIS_ALLOW_INSECURE_DEFAULTS: "false"
+
+  # ------------------------------------------------------------------
+  # Frontend: built and served by the same node container, but only
+  # reachable via Caddy.
+  # ------------------------------------------------------------------
+  frontend:
+    restart: unless-stopped
+    ports: []
+    environment:
+      # The Vite build picks these up at start; window.AEGIS_CONFIG is
+      # rendered with the production URLs.
+      VITE_API_BASE:          https://${DOMAIN}/api
+      VITE_KEYCLOAK_URL:      https://${DOMAIN}/auth
+      VITE_KEYCLOAK_REALM:    aegis
+      VITE_KEYCLOAK_CLIENT:   aegis-web
+
+  # ------------------------------------------------------------------
+  # Keycloak: behind /auth, must believe it's serving https on DOMAIN
+  # ------------------------------------------------------------------
+  keycloak:
+    restart: unless-stopped
+    ports: []
+    environment:
+      KC_HTTP_RELATIVE_PATH:        /auth
+      KC_HOSTNAME:                  ${DOMAIN}
+      KC_HOSTNAME_URL:              https://${DOMAIN}/auth
+      KC_HOSTNAME_ADMIN_URL:        https://${DOMAIN}/auth
+      KC_HOSTNAME_STRICT:           "false"
+      KC_HOSTNAME_STRICT_HTTPS:     "true"
+      KC_PROXY:                     edge
+      KC_HEALTH_ENABLED:            "true"
+
+  # ------------------------------------------------------------------
+  # Everything else: just turn on restart policy. No port changes
+  # because they weren't exposed publicly to begin with.
+  # ------------------------------------------------------------------
+  postgres:   { restart: unless-stopped }
+  mongo:      { restart: unless-stopped }
+  redis:      { restart: unless-stopped }
+  vault:      { restart: unless-stopped }
+  opa:        { restart: unless-stopped }
+  otel-collector: { restart: unless-stopped }
+  jaeger:     { restart: unless-stopped }
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  aegis:
+    name: aegis

@@ -1,0 +1,21 @@
+# For reproducible production builds, pin by digest (e.g. python:3.11-slim@sha256:...)
+# and scan/SBOM the resulting image in CI.
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# v1.23.6: docker CLI for MCP servers distributed as docker images (e.g. mcp/*
+# from the Docker MCP Hub). Uses the host docker.sock mounted by docker-compose.yml.
+RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz \
+    | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
+COPY pyproject.toml README.md /app/
+COPY src /app/src
+RUN pip install --no-cache-dir --default-timeout=900 --retries=10 -e . \
+ && python -m spacy download en_core_web_sm \
+ && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-mpnet-base-v2')"
+EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+  CMD curl -fsS http://localhost:8080/health || exit 1
+CMD ["uvicorn", "aegis_fabric.main:app", "--host", "0.0.0.0", "--port", "8080"]

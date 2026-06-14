@@ -1,0 +1,24 @@
+skill_id: matter-intake
+version: 1.0.0
+name: Legal Matter Intake
+risk_tier: T2
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write:
+    - namespace: analyst-notes
+  tools:
+  - doc_retrieve
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: nRmCMpNZ+xk75a4kGaw91V+6HlILVSFDtxyU/KolWsR4AvzGFdRPAH1QKhq1Yx4tgbhQ/rrES/Sp+kHcKhoxCQ==

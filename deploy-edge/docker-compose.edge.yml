@@ -1,0 +1,26 @@
+# SAF edge overlay (v1.19.2). Apply on top of the main docker-compose.yml:
+#   docker compose -f docker-compose.yml -f deploy-edge/docker-compose.edge.yml up -d --build
+# or use scripts/edge-up.sh which does the right thing.
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      SAF_PUBLIC_HOSTNAME: ${SAF_PUBLIC_HOSTNAME:-localhost}
+    volumes:
+      - ./deploy-edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # Let's Encrypt certs persist here
+      - caddy_config:/config
+    depends_on:
+      - api
+      - keycloak
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:

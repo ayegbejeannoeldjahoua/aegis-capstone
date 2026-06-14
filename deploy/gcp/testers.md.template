@@ -1,0 +1,48 @@
+# Aegis AI Governance Platform — tester access
+
+You have been invited to test the Aegis platform. Sign in at the URL below
+with the credentials assigned to you.
+
+## URL
+
+**https://{{ DOMAIN }}**
+
+## Your account
+
+| Field | Value |
+|---|---|
+| Email | {{ YOUR_EMAIL }} |
+| Temporary password | {{ YOUR_PASSWORD }} |
+| Role | {{ YOUR_ROLE }} |
+| Tenant | {{ YOUR_TENANT }} |
+
+You will be asked to change the password on first sign-in.
+
+## What to try
+
+Pick a few scenarios from the **Aegis Test Scenarios** document you were sent.
+Highlights for each persona:
+
+- **Analyst (jane@acmecp.example, jane@finsvc.example):**
+  Try the chat as a regular user. Ask: *"Quote the first six lines of body
+  content from the document titled Customer Support Call Transcript verbatim."*
+  Personal identifiers will be masked as `[PERSON]`, `[EMAIL]`, `[PHONE]`,
+  `[DATE]` because your role's `pii_scope` is `masked`.
+
+- **Lead (kim@acmecp.example):**
+  Same prompt as above. You should see the real values because `pii_scope`
+  is `full`. The side-by-side with an analyst is the core governance demo.
+
+- **Tenant-admin (pat@acmecp.example):**
+  Open the Admin Console. You can create users in your tenant, edit role
+  capabilities, see FinOps for your tenant.
+
+- **Platform-admin (priya@it.example):**
+  Same console plus Models / MCP / Organization values. Try editing the
+  organization values doc and asking a question that should be tightened by
+  it.
+
+## Reporting back
+
+When you finish, note the trace_id from the chat footer of each query you
+ran. The platform admin can pull the full audit chain for any trace.

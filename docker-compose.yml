@@ -1,0 +1,212 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis_dev_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+    ports:
+    - 5432:5432
+    volumes:
+    - postgres_data:/var/lib/postgresql/data
+    - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    - ./deploy/postgres/01-keycloak-db.sql:/docker-entrypoint-initdb.d/01-keycloak-db.sql:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis}
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    command:
+    - start
+    - --import-realm
+    - --optimized=false
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-aegis}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-aegis_dev_password_change_me}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_change_me}
+      KC_HOSTNAME_STRICT: 'false'
+      KC_HTTP_ENABLED: 'true'
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: 'true'
+    ports:
+    - 8081:8080
+    volumes:
+    - ./deploy/keycloak/realm-aegis.json:/opt/keycloak/data/import/realm-aegis.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /realms/aegis/.well-known/openid-configuration HTTP/1.1\r\nHost:\
+        \ localhost\r\nConnection: close\r\n\r\n' >&3; cat <&3 | grep -q issuer"
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    restart: unless-stopped
+  opa:
+    image: openpolicyagent/opa:0.70.0
+    command:
+    - run
+    - --server
+    - --addr
+    - 0.0.0.0:8181
+    ports:
+    - 8181:8181
+    restart: unless-stopped
+  vault:
+    image: hashicorp/vault:1.17
+    cap_add:
+    - IPC_LOCK
+    command:
+    - server
+    - -dev
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN:-root-dev-token-change-me}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    ports:
+    - 8200:8200
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - vault status -address=http://127.0.0.1:8200 >/dev/null 2>&1 || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command:
+    - --config=/etc/otelcol/config.yaml
+    volumes:
+    - ./deploy/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+    - 4317:4317
+    - 4318:4318
+    - 8889:8889
+    depends_on:
+    - jaeger
+    restart: unless-stopped
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+    - 16686:16686
+    - 14250:14250
+    restart: unless-stopped
+  runtime-cell-image:
+    image: aegis-runtime-cell:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime-cell
+    command:
+    - 'true'
+    restart: 'no'
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file: .env
+    environment:
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://keycloak:8080/realms/aegis}
+      OIDC_PUBLIC_ISSUER: ${OIDC_PUBLIC_ISSUER:-http://localhost:8081/realms/aegis}
+      OPA_URL: http://opa:8181
+      VAULT_ADDR: http://vault:8200
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password_change_me}@postgres:5432/${POSTGRES_DB:-aegis}
+      AEGIS_ENV: ${AEGIS_ENV:-development}
+      AEGIS_ADMIN_TOKEN: ${AEGIS_ADMIN_TOKEN:-change-me-admin-token}
+      AEGIS_SKILL_SIGNING_KEY: ${AEGIS_SKILL_SIGNING_KEY:-demo-skill-signing-key}
+      AEGIS_CORS_ORIGINS: ${AEGIS_CORS_ORIGINS:-http://localhost:5173}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_change_me}
+      AEGIS_KC_ADMIN_BASE: http://keycloak:8080
+      AEGIS_RATE_LIMIT_BACKEND: ${AEGIS_RATE_LIMIT_BACKEND:-redis}
+      AEGIS_REDIS_URL: redis://redis:6379/0
+      AEGIS_MONGO_URL: mongodb://mongo:27017
+      AEGIS_SKILL_PUBLIC_KEY: ${AEGIS_SKILL_PUBLIC_KEY:-Ms5VAI+2S9EJZZSGcV/EPwAyvpx/RGbRELjcIrfgGc8=}
+      AEGIS_EMBED_ENABLED: ${AEGIS_EMBED_ENABLED:-false}
+      AEGIS_EMBED_BASE: ${AEGIS_EMBED_BASE:-http://host.docker.internal:11434}
+      AEGIS_EMBED_MODEL: ${AEGIS_EMBED_MODEL:-nomic-embed-text}
+      AEGIS_EXPORT_ENABLED: ${AEGIS_EXPORT_ENABLED:-true}
+      AEGIS_EXPORT_PATH: /app/exports/seed-state.sql
+      AEGIS_EXPORT_INTERVAL: ${AEGIS_EXPORT_INTERVAL:-15}
+    ports:
+    - 8080:8080
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ./configs:/app/configs:ro
+    - ./deploy:/app/deploy:ro
+    - ./exports:/app/exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      opa:
+        condition: service_started
+      vault:
+        condition: service_started
+      runtime-cell-image:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    security_opt:
+    - no-new-privileges:true
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    ports:
+    - 6379:6379
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  mongo:
+    image: mongo:7
+    ports:
+    - 27017:27017
+    volumes:
+    - mongo_data:/data/db
+    healthcheck:
+      test:
+      - CMD
+      - mongosh
+      - --quiet
+      - --eval
+      - db.adminCommand('ping')
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+    - 5173:80
+    depends_on:
+    - api
+    - keycloak
+    restart: unless-stopped
+volumes:
+  postgres_data: null
+  mongo_data: null

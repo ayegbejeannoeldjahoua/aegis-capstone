@@ -1,0 +1,22 @@
+skill_id: assistant
+version: 1.0.0
+name: Assistant
+risk_tier: T1 Governed Chat
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read: []
+    write: []
+  tools:
+  - doc_search
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: 7RGgXKOlgSXSXUF+ax8EgSjI0gydYfsQoPXup+QM7FWELKFu/cq0d6+gMf3GzdcjrbKycDSnaLmS2mDWx8G6DA==

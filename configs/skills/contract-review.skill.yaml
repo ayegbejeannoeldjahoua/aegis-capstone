@@ -1,0 +1,25 @@
+skill_id: contract-review
+version: 1.0.0
+name: Contract Review
+risk_tier: T3
+entrypoint: sentinel_fabric.skill_runner:run_generic_skill
+capabilities:
+  memory:
+    read:
+    - namespace: analyst-notes
+    write: []
+  tools:
+  - doc_retrieve
+  - pdf_extract
+  - redact
+  model:
+    outbound: true
+    purposes:
+    - chat
+  runtime:
+    sandbox_required: false
+    network: none
+role_enablement: {}
+signature:
+  algorithm: ed25519
+  value: 9Ha8abQAI6sMD5ezTngE9BdbxQlxqAOdFUwmYl6vvFxIkSmbqpftJvh8UuA6iDhTQDZCeXvfrwa5IY5GGbzOBQ==
