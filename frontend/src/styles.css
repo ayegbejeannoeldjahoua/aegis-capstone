@@ -5,6 +5,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Figma design-system tokens — Phase A (additive, opt-in via .theme-figma).
+   See src/tokens.css for rationale and the full token table. Imported here
+   so it lives in the same cascade as the rest of the global styles. */
+@import "./tokens.css";
+
 /* Aegis AI Governance Platform — dark slate theme matching the Aegis brand. */
 :root {
   /* Aegis palette: deep slate background, blue-600 accents, white text */

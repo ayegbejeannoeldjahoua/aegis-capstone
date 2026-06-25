@@ -1,0 +1,156 @@
+/* ============================================================
+   Figma design-system tokens — Phase A (additive, opt-in)
+   ============================================================
+   Ported verbatim from src/styles/theme.css in the Figma Make
+   export "Project Aegis (copie).zip" — 2026-06-25.
+
+   Scoping rationale
+   -----------------
+   These tokens are scoped under .theme-figma (NOT :root) so the
+   existing Aegis dark-slate palette in styles.css keeps rendering
+   unchanged. Several Figma names collide with current usage:
+
+       --muted   current: text color (#94a3b8) — used in 18 rules
+                 figma:   background tone (#ececf0)
+       --card    current: panel bg (#1e293b)
+                 figma:   card bg (#ffffff)
+
+   If these tokens were defined at :root, every "muted text" line
+   in the existing dark theme would render near-white-on-dark
+   (invisible). The .theme-figma scope keeps them isolated to
+   pages that have been migrated to the Figma look.
+
+   How to use
+   ----------
+   1. Wrap a migrated page (or its container) with the class:
+          <div className="theme-figma">…</div>
+      Within that subtree, Tailwind utilities like  bg-primary,
+      text-foreground, bg-card, border-border  and so on resolve
+      to the Figma values defined here.
+
+   2. For dark mode within a Figma-themed subtree, add .dark to
+      the same element:
+          <div className="theme-figma dark">…</div>
+
+   3. To promote the Figma palette site-wide later, search-and-
+      replace ".theme-figma" with ":root" in this file. Existing
+      non-migrated rules in styles.css that still reference
+      --muted/--card as text/panel will need to be updated at
+      that point.
+
+   Phase A intentionally changes ZERO JSX. Only this file plus
+   one @import line in styles.css plus tailwind.config.js are
+   touched. Rollback = revert those three diffs.
+   ============================================================ */
+
+.theme-figma {
+  /* Typography sizing */
+  --font-size: 16px;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+
+  /* Surface tones */
+  --background: #ffffff;
+  --foreground: oklch(0.145 0 0);
+  --card: #ffffff;
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+
+  /* Primary brand (Aegis sign-in card uses this dark navy) */
+  --primary: #030213;
+  --primary-foreground: oklch(1 0 0);
+
+  /* Secondary / muted / accent surfaces */
+  --secondary: oklch(0.95 0.0058 264.53);
+  --secondary-foreground: #030213;
+  --muted: #ececf0;
+  --muted-foreground: #717182;
+  --accent: #e9ebef;
+  --accent-foreground: #030213;
+
+  /* Destructive (delete buttons, error toasts) */
+  --destructive: #d4183d;
+  --destructive-foreground: #ffffff;
+
+  /* Form controls */
+  --border: rgba(0, 0, 0, 0.1);
+  --input: transparent;
+  --input-background: #f3f3f5;
+  --switch-background: #cbced4;
+  --ring: oklch(0.708 0 0);
+
+  /* Chart palette (used by recharts wrappers in shadcn/ui chart.tsx) */
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+
+  /* Border radius scale */
+  --radius: 0.625rem;
+  --radius-sm: calc(0.625rem - 4px);
+  --radius-md: calc(0.625rem - 2px);
+  --radius-lg: 0.625rem;
+  --radius-xl: calc(0.625rem + 4px);
+
+  /* Sidebar palette */
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: #030213;
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+/* Dark mode within a Figma-themed subtree.
+   Matches:
+     <div class="theme-figma dark">...</div>     <- both on same el
+     <div class="theme-figma"><div class="dark">  <- dark inside
+     <div class="dark"><div class="theme-figma">  <- figma inside dark
+*/
+.theme-figma.dark,
+.theme-figma .dark,
+.dark .theme-figma {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+}
+
+/* Minimal base styles when .theme-figma is active. Matches the
+   Figma theme.css @layer base block — but only inside the scope. */
+.theme-figma {
+  background: var(--background);
+  color: var(--foreground);
+}
