@@ -122,6 +122,10 @@ volumes:
   caddy_data:
   caddy_config:
 
-networks:
-  default:
-    name: aegis
+# No explicit `networks:` block — compose auto-generates a default network
+# named `${project}_default` (i.e. `aegis_platform_default`). The earlier
+# `networks: default: name: aegis` directive caused label conflicts every
+# redeploy: existing `aegis` networks with stale labels survived across
+# runs, and compose refused to reuse them. With the default scheme,
+# `docker network ls` shows the project-prefixed name and there's no
+# collision.

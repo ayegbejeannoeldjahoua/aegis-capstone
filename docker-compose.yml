@@ -44,13 +44,16 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test:
-      - CMD-SHELL
-      - "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /realms/aegis/.well-known/openid-configuration HTTP/1.1\r\nHost:\
-        \ localhost\r\nConnection: close\r\n\r\n' >&3; cat <&3 | grep -q issuer"
-      interval: 10s
+      # Process-level liveness check. The earlier /dev/tcp/ probe failed
+      # silently in this image's UBI base (bash builtin disabled). pgrep
+      # is shipped in the Keycloak UBI base. Combined with start_period
+      # this gives the JVM ~90 seconds to boot before dependents start
+      # their OIDC discovery loops.
+      test: ["CMD", "pgrep", "-f", "quarkus"]
+      interval: 30s
       timeout: 5s
-      retries: 60
+      retries: 6
+      start_period: 90s
     restart: unless-stopped
   opa:
     image: openpolicyagent/opa:0.70.0
@@ -117,24 +120,30 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    env_file: .env
     environment:
       OIDC_ISSUER: ${OIDC_ISSUER:-http://keycloak:8080/realms/aegis}
       OIDC_PUBLIC_ISSUER: ${OIDC_PUBLIC_ISSUER:-http://localhost:8081/realms/aegis}
       OPA_URL: http://opa:8181
       VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-root-dev-token-change-me}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       DATABASE_URL: postgresql://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password_change_me}@postgres:5432/${POSTGRES_DB:-aegis}
       AEGIS_ENV: ${AEGIS_ENV:-development}
       AEGIS_ADMIN_TOKEN: ${AEGIS_ADMIN_TOKEN:-change-me-admin-token}
+      AEGIS_LOCAL_MASTER_KEY: ${AEGIS_LOCAL_MASTER_KEY:-change-me-local-master-key-32bytes}
+      AEGIS_AUDIT_KEY: ${AEGIS_AUDIT_KEY:-}
+      AEGIS_SECRET_BACKEND: ${AEGIS_SECRET_BACKEND:-env}
+      AEGIS_SECRET_ENV_FALLBACK: ${AEGIS_SECRET_ENV_FALLBACK:-true}
       AEGIS_SKILL_SIGNING_KEY: ${AEGIS_SKILL_SIGNING_KEY:-demo-skill-signing-key}
       AEGIS_CORS_ORIGINS: ${AEGIS_CORS_ORIGINS:-http://localhost:5173}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_change_me}
       AEGIS_KC_ADMIN_BASE: http://keycloak:8080
+      AEGIS_KC_REALM: ${KEYCLOAK_REALM:-aegis}
+      AEGIS_KC_PUBLIC_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-aegis-cli}
       AEGIS_RATE_LIMIT_BACKEND: ${AEGIS_RATE_LIMIT_BACKEND:-redis}
-      AEGIS_REDIS_URL: redis://redis:6379/0
-      AEGIS_MONGO_URL: mongodb://mongo:27017
+      AEGIS_REDIS_URL: redis://:${REDIS_PASSWORD:-redis_dev_password_change_me}@redis:6379/0
+      AEGIS_MONGO_URL: mongodb://${MONGO_INITDB_ROOT_USERNAME:-aegis}:${MONGO_INITDB_ROOT_PASSWORD:-mongo_dev_password_change_me}@mongo:27017/?authSource=admin
       AEGIS_SKILL_PUBLIC_KEY: ${AEGIS_SKILL_PUBLIC_KEY:-Ms5VAI+2S9EJZZSGcV/EPwAyvpx/RGbRELjcIrfgGc8=}
       AEGIS_EMBED_ENABLED: ${AEGIS_EMBED_ENABLED:-false}
       AEGIS_EMBED_BASE: ${AEGIS_EMBED_BASE:-http://host.docker.internal:11434}
@@ -142,6 +151,13 @@ services:
       AEGIS_EXPORT_ENABLED: ${AEGIS_EXPORT_ENABLED:-true}
       AEGIS_EXPORT_PATH: /app/exports/seed-state.sql
       AEGIS_EXPORT_INTERVAL: ${AEGIS_EXPORT_INTERVAL:-15}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AEGIS_DEFAULT_MODEL: ${AEGIS_DEFAULT_MODEL:-openai/gpt-4.1}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
     ports:
     - 8080:8080
     volumes:
@@ -153,7 +169,12 @@ services:
       postgres:
         condition: service_healthy
       keycloak:
-        condition: service_healthy
+        # Was service_healthy — switched to service_started so api isn't
+        # blocked by Keycloak healthcheck flakes. The api already retries
+        # OIDC discovery with backoff on its own, so this is the right
+        # boundary: wait for keycloak's container to START, not to be
+        # marked healthy by Docker's probe.
+        condition: service_started
       opa:
         condition: service_started
       vault:
@@ -169,19 +190,27 @@ services:
     restart: unless-stopped
   redis:
     image: redis:7-alpine
+    command:
+    - sh
+    - -c
+    - redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_dev_password_change_me}
     ports:
     - 6379:6379
     healthcheck:
       test:
-      - CMD
-      - redis-cli
-      - ping
+      - CMD-SHELL
+      - redis-cli -a "$${REDIS_PASSWORD}" ping | grep -q PONG
       interval: 5s
       timeout: 3s
       retries: 20
     restart: unless-stopped
   mongo:
     image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-aegis}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-mongo_dev_password_change_me}
     ports:
     - 27017:27017
     volumes:
@@ -191,6 +220,12 @@ services:
       - CMD
       - mongosh
       - --quiet
+      - -u
+      - ${MONGO_INITDB_ROOT_USERNAME:-aegis}
+      - -p
+      - ${MONGO_INITDB_ROOT_PASSWORD:-mongo_dev_password_change_me}
+      - --authenticationDatabase
+      - admin
       - --eval
       - db.adminCommand('ping')
       interval: 10s
@@ -203,6 +238,11 @@ services:
       dockerfile: Dockerfile
     ports:
     - 5173:80
+    environment:
+      VITE_API_BASE: ${VITE_API_BASE:-/api}
+      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-/auth}
+      VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-aegis}
+      VITE_KEYCLOAK_CLIENT: ${VITE_KEYCLOAK_CLIENT:-aegis-cli}
     depends_on:
     - api
     - keycloak
