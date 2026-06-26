@@ -42,8 +42,6 @@ services:
       - frontend
       - api
       - keycloak
-    networks:
-      - aegis
 
   # ------------------------------------------------------------------
   # API: drop the public 8080 binding, set PUBLIC_BASE_URL + CORS for prod
@@ -56,9 +54,12 @@ services:
       AEGIS_ENV:               production
       AEGIS_PUBLIC_BASE_URL:   https://${DOMAIN}/api
       AEGIS_CORS_ORIGINS:      https://${DOMAIN}
-      OIDC_ISSUER:             http://keycloak:8080/auth/realms/aegis
-      OIDC_PUBLIC_ISSUER:      https://${DOMAIN}/auth/realms/aegis
+      OIDC_ISSUER:             http://keycloak:8080/auth/realms/${KEYCLOAK_REALM:-aegis}
+      OIDC_PUBLIC_ISSUER:      https://${DOMAIN}/auth/realms/${KEYCLOAK_REALM:-aegis}
+      AEGIS_KC_ADMIN_BASE:     http://keycloak:8080/auth
       AEGIS_ALLOW_INSECURE_DEFAULTS: "false"
+      AEGIS_SECRET_BACKEND:    ${AEGIS_SECRET_BACKEND:-env}
+      AEGIS_SECRET_ENV_FALLBACK: ${AEGIS_SECRET_ENV_FALLBACK:-true}
 
   # ------------------------------------------------------------------
   # Frontend: built and served by the same node container, but only
@@ -70,10 +71,10 @@ services:
     environment:
       # The Vite build picks these up at start; window.AEGIS_CONFIG is
       # rendered with the production URLs.
-      VITE_API_BASE:          https://${DOMAIN}/api
-      VITE_KEYCLOAK_URL:      https://${DOMAIN}/auth
-      VITE_KEYCLOAK_REALM:    aegis
-      VITE_KEYCLOAK_CLIENT:   aegis-web
+      VITE_API_BASE:          /api
+      VITE_KEYCLOAK_URL:      /auth
+      VITE_KEYCLOAK_REALM:    ${KEYCLOAK_REALM:-aegis}
+      VITE_KEYCLOAK_CLIENT:   ${KEYCLOAK_CLIENT_ID:-aegis-cli}
 
   # ------------------------------------------------------------------
   # Keycloak: behind /auth, must believe it's serving https on DOMAIN
@@ -88,8 +89,22 @@ services:
       KC_HOSTNAME_ADMIN_URL:        https://${DOMAIN}/auth
       KC_HOSTNAME_STRICT:           "false"
       KC_HOSTNAME_STRICT_HTTPS:     "true"
-      KC_PROXY:                     edge
+      KC_PROXY_HEADERS:             xforwarded
       KC_HEALTH_ENABLED:            "true"
+    healthcheck:
+      # The previous test used bash's /dev/tcp/ builtin which is disabled
+      # in this image's UBI base — every probe exited 1 with empty output,
+      # so api / frontend / caddy were blocked from starting via
+      # depends_on: service_healthy. We replaced it with a process-level
+      # liveness check (pgrep finds the Keycloak/Quarkus JVM). This isn't
+      # a deep service-health probe, but combined with start_period=90s
+      # it's enough for dependents to wait until the JVM is up, then
+      # let them retry OIDC discovery against Keycloak themselves.
+      test: ["CMD", "pgrep", "-f", "quarkus"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
 
   # ------------------------------------------------------------------
   # Everything else: just turn on restart policy. No port changes
@@ -108,5 +123,5 @@ volumes:
   caddy_config:
 
 networks:
-  aegis:
+  default:
     name: aegis
