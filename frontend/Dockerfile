@@ -3,7 +3,11 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# `npm install` (not `npm ci`) because the lock file in the repo has
+# drifted from package.json across sessions, and `npm ci` refuses to
+# proceed with an out-of-sync lock. `npm install` resolves whatever is
+# missing and produces a working build.
+RUN npm install --no-audit --no-fund
 
 COPY . .
 RUN npm run build
