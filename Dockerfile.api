@@ -12,6 +12,7 @@ RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.
     | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
 COPY pyproject.toml README.md /app/
 COPY src /app/src
+COPY scripts ./scripts
 RUN pip install --no-cache-dir --default-timeout=900 --retries=10 -e . \
  && python -m spacy download en_core_web_sm \
  && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-mpnet-base-v2')"
