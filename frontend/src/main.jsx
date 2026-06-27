@@ -9,24 +9,22 @@ const root = createRoot(document.getElementById("root"));
 
 // Boot sequence:
 //   1. initAuth() does a silent SSO check against Keycloak (no redirect).
-//   2. If a valid session already exists -> render <App /> (logged in).
-//   3. Otherwise -> render <SignIn />, the Aegis-branded landing page.
-//      The user types their email, clicks "Sign in", and we hand off
-//      to Keycloak (which collects the password and runs the OIDC flow).
-//   4. After Keycloak completes, the browser returns to the same URL,
-//      initAuth() finds the session, and step 2 renders <App />.
+//   2. If a session exists, render the authenticated Aegis app.
+//   3. Otherwise render the branded landing page, which hands off to Keycloak.
 initAuth()
-  .then(() => {
-    if (keycloak.authenticated) {
-      root.render(<App />);
-    } else {
-      root.render(<SignIn />);
-    }
+  .then((authenticated) => {
+    root.render(
+      <React.StrictMode>
+        {authenticated || keycloak.authenticated ? <App /> : <SignIn />}
+      </React.StrictMode>
+    );
   })
   .catch((e) => {
     root.render(
-      <div className="fatal">
-        Sign-in service unreachable: {String(e)}
-      </div>
+      <React.StrictMode>
+        <div className="fatal">
+          Authentication failed to initialize: {String(e?.message || e)}
+        </div>
+      </React.StrictMode>
     );
   });

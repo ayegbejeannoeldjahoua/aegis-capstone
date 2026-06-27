@@ -1,5 +1,26 @@
 import React, { useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  MessageSquare,
+  Paperclip,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 import { api } from "../api/client.js";
+import {
+  AegisBadge,
+  AegisButton,
+  EmptyPanel,
+  ShellTopBar,
+  cx,
+} from "../components/figma/AegisPrimitives.jsx";
 
 export default function Chat({ profile, onHome }) {
   const [prompt, setPrompt] = useState("");
@@ -28,41 +49,92 @@ export default function Chat({ profile, onHome }) {
   }
 
   return (
-    <div className="chat">
-      <header className="topbar">
-        <div className="brand">Aegis<span>AI Governance Platform</span></div>
-        <div className="who">
-          {profile && <span className="role-badge">{profile.role} · {profile.tenant_id}</span>}
-          <button className="ghost" onClick={onHome}>← Home</button>
-        </div>
-      </header>
-      <section className="chat-log">
-        {log.length === 0 && (
-          <div className="muted chat-empty">Ask anything. Your request is governed in the background by your
-            role — if a policy or budget denies it, the refusal appears here.</div>
-        )}
-        {log.map((m, i) => (
-          <div key={i} className={`bubble ${m.role}`}>
-            <div className="bubble-body">{m.text}</div>
-            {m.docs && m.docs.length > 0 && (
-              <div className="bubble-docs">
-                <small>Governed retrieval ({m.docs.length}):</small>
-                <ul>{m.docs.map((d, j) => (
-                  <li key={j}><small>{d.team}/{d.classification} — {d.title}</small></li>
-                ))}</ul>
-              </div>
-            )}
-            {m.isa && <DoneCriteria isa={m.isa} />}
-            {m.role === "assistant" && m.trace_id && <Thumbs trace_id={m.trace_id} skill_id={m.skill_id} />}
-            {m.meta && <small className="bubble-meta">{m.meta}</small>}
+    <div className="chat aegis-chat">
+      <ShellTopBar onBack={onHome} profile={profile} section="Chat / Governed Assistant" />
+      <div className="aegis-chat-body">
+        <aside className="aegis-chat-side" aria-label="Chat governance context">
+          <div className="aegis-chat-side-head">
+            <MessageSquare size={13} />
+            <span>Session</span>
           </div>
-        ))}
-        <div ref={endRef} />
-      </section>
-      <form className="chat-input" onSubmit={send}>
-        <input value={prompt} placeholder="Type a request…" onChange={(e) => setPrompt(e.target.value)} />
-        <button type="submit" disabled={busy}>{busy ? "…" : "Send"}</button>
-      </form>
+          <div className="aegis-chat-side-card">
+            <span className="aegis-side-label">Caller</span>
+            <strong>{profile?.email || "user"}</strong>
+            <small>{profile?.role || "role pending"} · {profile?.tenant_id || "tenant pending"}</small>
+          </div>
+          <div className="aegis-chat-side-card">
+            <span className="aegis-side-label">Governance rails</span>
+            <AegisBadge tone="green">audited</AegisBadge>
+            <AegisBadge>policy checked</AegisBadge>
+            <AegisBadge tone="amber">budget aware</AegisBadge>
+          </div>
+          <div className="aegis-chat-side-card">
+            <span className="aegis-side-label">Feedback</span>
+            <small>Assistant turns keep trace-linked thumbs feedback when an audit trace is returned.</small>
+          </div>
+        </aside>
+
+        <main className="aegis-chat-main">
+          <div className="aegis-chat-policybar">
+            <ShieldCheck size={12} />
+            <span>active controls</span>
+            <AegisBadge>PII redaction</AegisBadge>
+            <AegisBadge>model routing</AegisBadge>
+            <AegisBadge>FinOps guard</AegisBadge>
+            <div className="aegis-chat-model">
+              <Sparkles size={12} />
+              <span>assistant skill</span>
+            </div>
+          </div>
+
+          <section className="chat-log aegis-chat-log" aria-live="polite">
+            {log.length === 0 && (
+              <EmptyPanel icon={MessageSquare} title="Start a governed chat">
+                Requests are policy-checked, model-routed, budgeted and audited under your role.
+              </EmptyPanel>
+            )}
+            {log.map((m, i) => (
+              <div key={i} className={cx("aegis-bubble-row", m.role === "user" && "from-user", m.role === "error" && "from-error")}>
+                {m.role !== "user" && (
+                  <div className={cx("aegis-bubble-avatar", m.role === "error" && "error")}>
+                    {m.role === "error" ? <AlertTriangle size={13} /> : <Sparkles size={13} />}
+                  </div>
+                )}
+                <article className={`bubble aegis-bubble ${m.role}`}>
+                  <div className="bubble-body">{m.text}</div>
+                  {m.docs && m.docs.length > 0 && (
+                    <div className="bubble-docs aegis-bubble-docs">
+                      <small><FileText size={11} /> Governed retrieval ({m.docs.length})</small>
+                      <ul>{m.docs.map((d, j) => (
+                        <li key={j}><small>{d.team}/{d.classification} - {d.title}</small></li>
+                      ))}</ul>
+                    </div>
+                  )}
+                  {m.isa && <DoneCriteria isa={m.isa} />}
+                  {m.role === "assistant" && m.trace_id && <Thumbs trace_id={m.trace_id} skill_id={m.skill_id} />}
+                  {m.meta && <small className="bubble-meta">{m.meta}</small>}
+                </article>
+              </div>
+            ))}
+            <div ref={endRef} />
+          </section>
+
+          <form className="chat-input aegis-chat-input" onSubmit={send}>
+            <div className="aegis-composer">
+              <Paperclip size={14} />
+              <input value={prompt} placeholder="Ask the governed assistant..." onChange={(e) => setPrompt(e.target.value)} />
+              <span className="aegis-enter-hint">Enter</span>
+              <AegisButton type="submit" disabled={busy} icon={Send}>
+                {busy ? "Sending" : "Send"}
+              </AegisButton>
+            </div>
+            <div className="aegis-composer-meta">
+              <span><span className="aegis-live-dot" /> governed · audited</span>
+              <span>skill_id assistant</span>
+            </div>
+          </form>
+        </main>
+      </div>
     </div>
   );
 }
@@ -92,8 +164,8 @@ function Thumbs({ trace_id, skill_id }) {
   }
   return (
     <div className="bubble-fb">
-      <button type="button" title="Helpful" className="fb-btn fb-up" onClick={() => submit(1)}>👍</button>
-      <button type="button" title="Not helpful" className="fb-btn fb-down" onClick={() => setState({ ...state, showNote: true, rating: -1 })}>👎</button>
+      <button type="button" title="Helpful" className="fb-btn fb-up" onClick={() => submit(1)}><ThumbsUp size={12} /></button>
+      <button type="button" title="Not helpful" className="fb-btn fb-down" onClick={() => setState({ ...state, showNote: true, rating: -1 })}><ThumbsDown size={12} /></button>
       {state.showNote && (
         <span className="fb-note-wrap">
           <input className="fb-note" placeholder="What was wrong? (optional)"
@@ -115,9 +187,9 @@ function DoneCriteria({ isa }) {
   return (
     <div className={`bubble-isa ${allMet ? "isa-ok" : "isa-partial"}`}>
       <button type="button" className="isa-summary" onClick={() => setOpen(!open)}>
-        <span className="isa-pill">{allMet ? "✓" : "!"}</span>
+        <span className="isa-pill">{allMet ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}</span>
         <span>Done criteria — <b>{isa.met}/{isa.total}</b> met</span>
-        <span className="isa-chev">{open ? "▾" : "▸"}</span>
+        <span className="isa-chev">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
       </button>
       {open && (
         <div className="isa-body">

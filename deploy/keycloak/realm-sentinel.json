@@ -1,1 +1,4 @@
-// superseded by realm-aegis.json — kept for git-history convenience
+{
+  "superseded_by": "realm-aegis.json",
+  "note": "Kept only as a migration marker; docker-compose imports realm-aegis.json."
+}
