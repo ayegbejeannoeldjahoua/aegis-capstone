@@ -13,7 +13,7 @@ function List({ title, rows, labelKey, valueKey }) {
             <span className="text-slate-400">${Number(row[valueKey] || 0).toFixed(4)}</span>
           </li>
         ))}
-        {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">not instrumented</li>}
+        {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">No cost records yet</li>}
       </ul>
     </div>
   );
@@ -35,10 +35,10 @@ export default function FinOpsSummary({ finops }) {
       </div>
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">
-          Top spending tenant: <span className="text-slate-100">{finops?.top_spending_tenant || "not instrumented"}</span>
+          Top spending tenant: <span className="text-slate-100">{finops?.top_spending_tenant || "No data"}</span>
         </div>
         <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">
-          Top spending role: <span className="text-slate-100">{finops?.top_spending_role || "not instrumented"}</span>
+          Top spending role: <span className="text-slate-100">{finops?.top_spending_role || "No data"}</span>
         </div>
       </div>
     </section>

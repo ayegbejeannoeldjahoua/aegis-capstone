@@ -2,6 +2,10 @@ import React from "react";
 import { Database, FileSearch, Layers, SearchX } from "lucide-react";
 import MetricCard from "./MetricCard.jsx";
 
+function available(value) {
+  return value !== null && value !== undefined;
+}
+
 function Bars({ rows, labelKey }) {
   const max = Math.max(1, ...(rows || []).map((r) => Number(r.count || 0)));
   return (
@@ -17,7 +21,7 @@ function Bars({ rows, labelKey }) {
           </div>
         </li>
       ))}
-      {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">not instrumented</li>}
+      {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">No retrieval activity today</li>}
     </ul>
   );
 }
@@ -26,20 +30,25 @@ export default function RetrievalSummary({ retrieval }) {
   return (
     <section className="rounded-2xl border border-slate-700/60 bg-slate-800/70 p-5">
       <h2 className="text-sm font-semibold text-slate-200 mb-4">Retrieval summary</h2>
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
-        <MetricCard title="Retrieval calls" value={retrieval?.retrieval_calls_today} icon={FileSearch} color="blue" />
-        <MetricCard title="Avg docs / turn" value={retrieval?.average_retrieved_docs_per_turn} icon={Database} color="violet" />
-        <MetricCard title="Zero-result retrievals" value={retrieval?.zero_result_retrievals} icon={SearchX} color="amber" />
-        <MetricCard title="Leakage alerts" value={retrieval?.cross_tenant_leakage_alerts} icon={Layers} color={(retrieval?.cross_tenant_leakage_alerts?.value || 0) === 0 ? "emerald" : "rose"} />
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-5">
+        <MetricCard title="Retrieval calls" value={retrieval?.calls_today ?? 0} icon={FileSearch} color="blue" />
+        <MetricCard title="Retrieved docs" value={retrieval?.documents_returned_today ?? 0} icon={Database} color="blue" />
+        {available(retrieval?.avg_docs_per_turn) && (
+          <MetricCard title="Avg docs / turn" value={retrieval.avg_docs_per_turn} icon={Database} color="violet" />
+        )}
+        <MetricCard title="Zero-result retrievals" value={retrieval?.zero_result_count ?? 0} icon={SearchX} color="amber" />
+        {available(retrieval?.cross_tenant_leakage_alerts) && (
+          <MetricCard title="Leakage alerts" value={retrieval.cross_tenant_leakage_alerts} icon={Layers} color={(retrieval.cross_tenant_leakage_alerts || 0) === 0 ? "emerald" : "rose"} />
+        )}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div>
           <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">By namespace</h3>
-          <Bars rows={retrieval?.retrievals_by_namespace} labelKey="namespace" />
+          <Bars rows={retrieval?.by_namespace} labelKey="namespace" />
         </div>
         <div>
           <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">By classification</h3>
-          <Bars rows={retrieval?.retrievals_by_classification} labelKey="classification" />
+          <Bars rows={retrieval?.by_classification} labelKey="classification" />
         </div>
       </div>
     </section>

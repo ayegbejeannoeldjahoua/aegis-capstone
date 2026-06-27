@@ -22,8 +22,8 @@ function unpackMetric(value, unit, instrumented, note) {
 }
 
 function formatValue(value, unit, instrumented) {
-  if (instrumented === false || value === null || value === undefined) return "not instrumented";
-  if (unit === "USD") return `$${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  if (instrumented === false || value === null || value === undefined) return "No data";
+  if (unit === "USD") return `$${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
   if (typeof value === "number") return Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 });
   return value;
 }

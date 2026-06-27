@@ -2,15 +2,23 @@ import React from "react";
 import { GitBranch, Rows3, ShieldCheck } from "lucide-react";
 import MetricCard from "./MetricCard.jsx";
 
+function available(value) {
+  return value !== null && value !== undefined;
+}
+
 export default function AuditTraceSummary({ audit }) {
-  const chain = audit?.audit_chain_verification || {};
+  const chain = audit?.chain_verification || {};
   return (
     <section className="rounded-2xl border border-slate-700/60 bg-slate-800/70 p-5">
       <h2 className="text-sm font-semibold text-slate-200 mb-4">Audit and trace summary</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-        <MetricCard title="Audit events today" value={audit?.audit_events_today} icon={Rows3} color="blue" />
-        <MetricCard title="Avg audit rows / turn" value={audit?.average_audit_rows_per_chat_turn} icon={GitBranch} color="violet" />
-        <MetricCard title="Trace coverage" value={audit?.trace_coverage_pct} icon={ShieldCheck} color="emerald" />
+        <MetricCard title="Audit events today" value={audit?.events_today ?? 0} icon={Rows3} color="blue" />
+        {available(audit?.avg_rows_per_turn) && (
+          <MetricCard title="Avg audit rows / turn" value={audit.avg_rows_per_turn} icon={GitBranch} color="violet" />
+        )}
+        {available(audit?.trace_coverage) && (
+          <MetricCard title="Trace coverage" value={audit.trace_coverage} unit="%" icon={ShieldCheck} color="emerald" />
+        )}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div>

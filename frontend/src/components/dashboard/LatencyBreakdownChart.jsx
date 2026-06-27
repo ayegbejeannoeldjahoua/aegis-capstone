@@ -2,35 +2,38 @@ import React from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const LATENCY_KEYS = [
-  ["p95_pdp_latency_ms", "PDP"],
-  ["p95_retrieval_latency_ms", "Retrieval"],
-  ["p95_model_latency_ms", "Model"],
-  ["p95_pii_inspection_latency_ms", "PII"],
-  ["p95_audit_write_latency_ms", "Audit"],
-  ["p95_isa_verification_latency_ms", "ISA"],
-  ["p95_finops_write_latency_ms", "FinOps"],
+  ["pdp", "PDP"],
+  ["retrieval", "Retrieval"],
+  ["model", "Model"],
+  ["audit_write", "Audit"],
+  ["isa", "ISA"],
 ];
 
-function metricValue(metric) {
-  return metric?.instrumented === false || metric?.value == null ? null : Number(metric.value);
+function latencyValue(stage) {
+  const value = stage?.p95_ms;
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function formatMs(value) {
+  return value === null || value === undefined ? "No data" : `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })} ms`;
 }
 
 export default function LatencyBreakdownChart({ latency }) {
   const bars = LATENCY_KEYS.map(([key, label]) => ({
     stage: label,
-    ms: metricValue(latency?.[key]) ?? 0,
-    instrumented: latency?.[key]?.instrumented !== false && latency?.[key]?.value != null,
+    ms: latencyValue(latency?.[key]) ?? 0,
+    available: latencyValue(latency?.[key]) !== null,
   }));
-  const e2e = latency?.e2e_latency_ms || {};
-  const hasBars = bars.some((b) => b.instrumented);
+  const e2e = latency?.end_to_end || {};
+  const hasBars = bars.some((b) => b.available);
   return (
     <section className="rounded-2xl border border-slate-700/60 bg-slate-800/70 p-5">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-4">
         <h2 className="text-sm font-semibold text-slate-200">Latency breakdown</h2>
         <div className="flex gap-3 text-xs text-slate-400">
-          <span>p50 e2e: {metricValue(e2e.p50) ?? "not instrumented"} ms</span>
-          <span>p95 e2e: {metricValue(e2e.p95) ?? "not instrumented"} ms</span>
-          <span>p99 e2e: {metricValue(e2e.p99) ?? "not instrumented"} ms</span>
+          <span>p50 e2e: {formatMs(e2e.p50_ms)}</span>
+          <span>p95 e2e: {formatMs(e2e.p95_ms)}</span>
+          <span>p99 e2e: {formatMs(e2e.p99_ms)}</span>
         </div>
       </div>
       <div className="h-64">
@@ -45,7 +48,7 @@ export default function LatencyBreakdownChart({ latency }) {
             </BarChart>
           </ResponsiveContainer>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-slate-500">not instrumented</div>
+          <div className="flex h-full items-center justify-center text-sm text-slate-500">No stage timings recorded today</div>
         )}
       </div>
     </section>

@@ -212,6 +212,10 @@ def record_token_usage(tokens: int) -> None:
     metrics = _current.get()
     if not metrics or not tokens:
         return
+    # Provider-reported usage is recorded at model-call completion. This
+    # fallback is only for providers that return no usage payload.
+    if metrics.tokens_total:
+        return
     metrics.tokens_total += int(tokens)
 
 
