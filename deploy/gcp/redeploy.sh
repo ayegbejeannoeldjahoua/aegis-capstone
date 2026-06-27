@@ -15,7 +15,9 @@
 #                              fresh image (otherwise compose reuses
 #                              the old container and you don't see
 #                              the new Dockerfile take effect)
-#   5. verify               -- check that the entrypoint script is in
+#   5. keycloak settings    -- apply the Aegis login theme + redirect URIs
+#                              to already-initialized Keycloak databases
+#   6. verify               -- check that the entrypoint script is in
 #                              the image, that config.js was regenerated
 #                              with the public URLs, and that the
 #                              entrypoint log line appeared at startup
@@ -34,7 +36,7 @@
 #   1  git pull failed (network or auth)
 #   2  cleanup failed
 #   3  frontend build failed
-#   4  verification step failed (image / config.js / entrypoint log)
+#   4  Keycloak settings or verification failed
 
 set -euo pipefail
 
@@ -145,9 +147,19 @@ systemctl start aegis.service 2>/dev/null || true
 ok "systemd unit enabled + started"
 
 # ============================================================
-# Step 5 — verify the three critical things
+# Step 5 — apply live Keycloak theme + redirect settings
 # ============================================================
-say "Step 5/5  Verify entrypoint + config.js + entrypoint log"
+say "Step 5/6  Apply Keycloak hosted login theme + redirects"
+if ! bash deploy/keycloak/apply-aegis-theme.sh; then
+    fail "Keycloak hosted login theme / redirect update failed"
+    exit 4
+fi
+ok "Keycloak realm uses Aegis login theme"
+
+# ============================================================
+# Step 6 — verify the three critical things
+# ============================================================
+say "Step 6/6  Verify entrypoint + config.js + entrypoint log"
 
 # Wait a moment for the frontend container to fully start
 sleep 3

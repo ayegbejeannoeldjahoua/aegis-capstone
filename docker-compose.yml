@@ -40,6 +40,7 @@ services:
     - 8081:8080
     volumes:
     - ./deploy/keycloak/realm-aegis.json:/opt/keycloak/data/import/realm-aegis.json:ro
+    - ./deploy/keycloak/themes:/opt/keycloak/themes:ro
     depends_on:
       postgres:
         condition: service_healthy

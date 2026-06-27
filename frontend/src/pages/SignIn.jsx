@@ -1,6 +1,10 @@
 import React, { useState } from "react";
 import { signInWithKeycloak } from "../auth/keycloak.js";
 
+// Reference-only: the production unauthenticated flow now redirects directly
+// to Keycloak's hosted `aegis` login theme. React must not collect passwords.
+// Keep this file only as visual reference for the Keycloak FreeMarker theme.
+//
 // Aegis-branded sign-in landing page. Matches the Figma mockup
 // (dark navy bg, white-on-dark card, blue accent). Acts as a
 // thin shell around Keycloak — the user types their email here,

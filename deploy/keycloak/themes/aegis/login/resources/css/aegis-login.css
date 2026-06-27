@@ -1,0 +1,302 @@
+:root {
+  --aegis-bg: #090c14;
+  --aegis-card: #131829;
+  --aegis-input: #0c1020;
+  --aegis-blue: #4a7cf8;
+  --aegis-blue-hover: #3a6ce8;
+  --aegis-text: #e8eaf0;
+  --aegis-muted: #6b7a96;
+  --aegis-border: rgba(255,255,255,0.07);
+  --aegis-danger: #f43f5e;
+}
+
+html,
+body,
+.login-pf,
+.login-pf body {
+  min-height: 100%;
+  background: var(--aegis-bg);
+  color: var(--aegis-text);
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(900px 520px at 15% -10%, rgba(74,124,248,.13) 0%, transparent 62%),
+    radial-gradient(900px 520px at 105% 110%, rgba(35,196,131,.07) 0%, transparent 60%),
+    var(--aegis-bg);
+}
+
+.login-pf-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+.login-pf-page .card-pf {
+  width: 100%;
+  max-width: 390px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+#kc-header,
+#kc-header-wrapper,
+#kc-content,
+#kc-content-wrapper,
+#kc-form,
+#kc-form-wrapper {
+  width: 100%;
+}
+
+#kc-header-wrapper {
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.aegis-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 28px;
+  text-align: center;
+  user-select: none;
+}
+
+.aegis-logo {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--aegis-blue);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+  box-shadow: 0 18px 38px rgba(74,124,248,.28);
+}
+
+.aegis-product {
+  color: var(--aegis-text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.aegis-subtitle {
+  color: var(--aegis-blue);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: .18em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.aegis-card {
+  width: 100%;
+  padding: 28px;
+  background: var(--aegis-card);
+  border: 1px solid var(--aegis-border);
+  border-radius: 12px;
+  box-shadow: 0 20px 40px -12px rgba(0,0,0,.5), 0 0 0 1px rgba(74,124,248,.05);
+}
+
+.aegis-card-header {
+  margin-bottom: 20px;
+}
+
+.aegis-card-header h1 {
+  margin: 0;
+  color: var(--aegis-text);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.aegis-card-header p {
+  margin: 6px 0 0;
+  color: var(--aegis-muted);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.aegis-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.aegis-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+}
+
+.aegis-field span {
+  color: var(--aegis-muted);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.aegis-field input {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 11px;
+  background: var(--aegis-input);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  color: var(--aegis-text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color .16s, box-shadow .16s;
+}
+
+.aegis-field input:focus {
+  border-color: rgba(74,124,248,.62);
+  box-shadow: 0 0 0 3px rgba(74,124,248,.18);
+}
+
+.aegis-field input[aria-invalid="true"] {
+  border-color: rgba(244,63,94,.58);
+}
+
+.aegis-alert,
+.aegis-field-error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(244,63,94,.11);
+  border: 1px solid rgba(244,63,94,.28);
+  color: #fda4af;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.aegis-alert-success {
+  background: rgba(35,196,131,.1);
+  border-color: rgba(35,196,131,.24);
+  color: #7ddfb1;
+}
+
+.aegis-alert-warning,
+.aegis-alert-info {
+  background: rgba(244,183,64,.1);
+  border-color: rgba(244,183,64,.24);
+  color: #f4d58a;
+}
+
+.aegis-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  margin-top: -2px;
+}
+
+.aegis-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--aegis-muted);
+  font-size: 12px;
+}
+
+.aegis-check input {
+  accent-color: var(--aegis-blue);
+}
+
+.aegis-options a,
+.aegis-info a {
+  color: var(--aegis-blue);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.aegis-options a:hover,
+.aegis-info a:hover {
+  color: var(--aegis-blue-hover);
+  text-decoration: underline;
+}
+
+.aegis-submit {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--aegis-blue);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  transition: background .16s, opacity .16s;
+}
+
+.aegis-submit:hover,
+.aegis-submit:focus {
+  background: var(--aegis-blue-hover);
+}
+
+.aegis-submit:disabled {
+  opacity: .62;
+  cursor: wait;
+}
+
+.aegis-footer {
+  margin-top: 22px;
+  color: var(--aegis-muted);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+.aegis-footer small {
+  color: rgba(107,122,150,.7);
+  font-size: 10px;
+}
+
+.aegis-info {
+  margin-top: 14px;
+  color: var(--aegis-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.pf-c-alert,
+.alert,
+#input-error {
+  box-shadow: none;
+}
+
+@media (max-width: 460px) {
+  .login-pf-page {
+    justify-content: flex-start;
+    padding-top: 42px;
+  }
+
+  .aegis-card {
+    padding: 24px;
+  }
+
+  .aegis-options {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

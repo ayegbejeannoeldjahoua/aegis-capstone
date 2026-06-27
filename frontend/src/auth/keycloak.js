@@ -7,17 +7,19 @@ export const keycloak = new Keycloak({
   clientId: cfg.CLIENT_ID || "aegis-cli",
 });
 
-// initAuth() is called once from main.jsx. check-sso lets the React sign-in
-// landing page render when there is no Keycloak session instead of forcing an
-// immediate redirect loop.
+// initAuth() is called once from main.jsx. login-required makes Keycloak's
+// hosted login page the single source of truth for credentials while keeping
+// Authorization Code + PKCE in keycloak-js.
 export async function initAuth() {
   return keycloak.init({
-    onLoad: "check-sso",
+    onLoad: "login-required",
     pkceMethod: "S256",
     checkLoginIframe: false,
   });
 }
 
+// Kept for non-production experiments and older imports. The normal app boot
+// path now redirects directly to Keycloak and never renders a React password UI.
 export function signInWithKeycloak(email) {
   return keycloak.login({
     loginHint: email || undefined,
