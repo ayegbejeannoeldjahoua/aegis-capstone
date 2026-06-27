@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from "react";
-import { Activity, Users, TrendingUp, Zap } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Hash, Timer } from "lucide-react";
 import { api } from "../api/client.js";
 import MetricCard      from "../components/dashboard/MetricCard.jsx";
-import LiveDecisionFeed from "../components/dashboard/LiveDecisionFeed.jsx";
 import SystemHealth    from "../components/dashboard/SystemHealth.jsx";
 import ActivityChart   from "../components/dashboard/ActivityChart.jsx";
+import GovernanceCard from "../components/dashboard/GovernanceCard.jsx";
+import LatencyBreakdownChart from "../components/dashboard/LatencyBreakdownChart.jsx";
+import FinOpsSummary from "../components/dashboard/FinOpsSummary.jsx";
+import AuditTraceSummary from "../components/dashboard/AuditTraceSummary.jsx";
+import RetrievalSummary from "../components/dashboard/RetrievalSummary.jsx";
+import RecentDecisionsTable from "../components/dashboard/RecentDecisionsTable.jsx";
 
 export default function Dashboard() {
   const [metrics, setMetrics] = useState(null);
@@ -21,32 +26,53 @@ export default function Dashboard() {
   }
   useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
 
-  const allowRate = metrics?.allow_rate_pct ?? 0;
-  const allowColor = allowRate >= 95 ? "emerald" : allowRate >= 80 ? "amber" : "rose";
-  const latency = metrics?.avg_pdp_latency_ms ?? 0;
-  const latencyColor = latency < 50 ? "emerald" : latency < 100 ? "amber" : "rose";
+  const summary = metrics?.summary || {};
 
   return (
     <div className="space-y-5">
       {err && <div className="error">{err}</div>}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <MetricCard title="Requests today" value={metrics?.total_requests_today ?? 0}
-                    icon={Activity} color="blue" trendLabel="all decisions" />
-        <MetricCard title="Allow rate" value={allowRate} unit="%"
-                    icon={TrendingUp} color={allowColor}
-                    trendLabel={allowRate >= 95 ? "healthy" : allowRate >= 80 ? "check denies" : "high deny rate"}
-                    trend={allowRate >= 95 ? 1 : allowRate < 80 ? -1 : 0} />
-        <MetricCard title="Active tenants" value={metrics?.active_tenants ?? 0}
-                    icon={Users} color="blue" trendLabel="tenants with activity" />
-        <MetricCard title="Avg PDP latency" value={latency} unit="ms"
-                    icon={Zap} color={latencyColor}
-                    trendLabel={latency < 50 ? "fast" : latency < 100 ? "ok" : "slow"} />
+      <div className="flex flex-col gap-1">
+        <h1 className="text-lg font-semibold text-slate-100">Dashboard</h1>
+        <div className="text-xs text-slate-500">
+          {metrics?.scope?.admin_scope === "tenant" ? `Tenant scope: ${metrics.scope.tenant_id}` : "Platform scope"}
+          {metrics?.generated_at ? ` · generated ${new Date(metrics.generated_at).toLocaleTimeString()}` : ""}
+        </div>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-slate-200">Executive summary</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
+          <MetricCard title="Requests today" value={summary.requests_today}
+                      icon={Activity} color="blue" />
+          <MetricCard title="Successful chat turns" value={summary.successful_chat_turns}
+                      icon={CheckCircle2} color="emerald" />
+          <MetricCard title="Error rate" value={summary.error_rate_pct}
+                      icon={AlertTriangle} color={(summary.error_rate_pct?.value || 0) > 5 ? "rose" : "emerald"} />
+          <MetricCard title="p95 end-to-end latency" value={summary.p95_e2e_latency_ms}
+                      icon={Timer} color="violet" />
+          <MetricCard title="Estimated cost today" value={summary.estimated_cost_today_usd}
+                      icon={CircleDollarSign} color="amber" />
+          <MetricCard title="Tokens today" value={summary.tokens_today}
+                      icon={Hash} color="blue" />
+        </div>
+      </section>
+
+      <GovernanceCard governance={metrics?.governance} />
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ActivityChart data={activity} />
-        <SystemHealth />
+        <SystemHealth system={metrics?.system} />
       </div>
-      <LiveDecisionFeed />
+
+      <LatencyBreakdownChart latency={metrics?.latency} />
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <FinOpsSummary finops={metrics?.finops} />
+        <AuditTraceSummary audit={metrics?.audit} />
+      </div>
+
+      <RetrievalSummary retrieval={metrics?.retrieval} />
+      <RecentDecisionsTable decisions={metrics?.recent_decisions} />
     </div>
   );
 }

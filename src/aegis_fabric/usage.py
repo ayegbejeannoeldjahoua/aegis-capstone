@@ -135,7 +135,14 @@ class UsageLimiter:
 
     def add_tokens(self, tenant: str, role: str, tokens: int) -> None:
         if tokens and tokens > 0:
+            start = time.perf_counter()
             self._guard(lambda: self.backend.incr_day(f"tok:{tenant}:{role}", int(tokens)), default=0)
+            try:
+                from . import operational_metrics
+
+                operational_metrics.record_finops_write((time.perf_counter() - start) * 1000.0, int(tokens))
+            except Exception:
+                pass
 
     def acquire_slot(self, tenant: str, sub: str, max_concurrent: int) -> bool:
         if not max_concurrent or max_concurrent <= 0:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import httpx
@@ -250,10 +251,29 @@ class ModelClient:
         the next. Raises the last error if all candidates fail."""
         last_err: Exception | None = None
         for profile in profiles:
+            start = time.perf_counter()
             try:
-                return await self._chat_retrying(profile, messages, temperature)
+                result = await self._chat_retrying(profile, messages, temperature)
+                try:
+                    from . import operational_metrics
+
+                    operational_metrics.record_model_call(
+                        (time.perf_counter() - start) * 1000.0,
+                        result.provider,
+                        result.model,
+                        result.usage,
+                    )
+                except Exception:
+                    pass
+                return result
             except Exception as e:  # provider/network error -> try next candidate
                 last_err = e
+                try:
+                    from . import operational_metrics
+
+                    operational_metrics.record_model_provider_error(profile.provider, profile.model_id, str(e))
+                except Exception:
+                    pass
                 log_event(logger, 30, "model_call_failed_trying_fallback", model=profile.model_id, error=str(e))
         raise RuntimeError(f"all model candidates failed; last error: {last_err}")
 

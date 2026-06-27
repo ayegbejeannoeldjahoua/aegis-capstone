@@ -16,6 +16,7 @@ from .audit import trace as audit_trace
 from .audit import verify_chain
 from .auth import Subject, get_subject, require_admin, validate_token
 from . import export_state, rbac
+from . import operational_metrics
 from .admin import router as admin_router
 from .values_docs import router as values_docs_router
 from .dashboard_api import router as dashboard_router
@@ -178,24 +179,49 @@ async def ask(req: AskRequest, subject: Subject = Depends(get_subject)):
     from .rbac import role_capabilities
     from .usage import usage
 
-    caps = await run_db(role_capabilities, subject.tenant_id, subject.role)
-    mc = caps.get("max_concurrent_requests", 0)
-    if not usage.acquire_slot(subject.tenant_id, subject.sub, mc):
-        raise HTTPException(status_code=429, detail={"error": "max_concurrent_requests"})
+    metrics_token = operational_metrics.begin_chat_turn(subject, req.skill_id)
+    mc = 0
+    acquired_slot = False
     try:
+        caps = await run_db(role_capabilities, subject.tenant_id, subject.role)
+        mc = caps.get("max_concurrent_requests", 0)
+        if not usage.acquire_slot(subject.tenant_id, subject.sub, mc):
+            snapshot = operational_metrics.error_snapshot(429, {"error": "max_concurrent_requests"})
+            await run_db(operational_metrics.persist_snapshot, snapshot)
+            raise HTTPException(status_code=429, detail={"error": "max_concurrent_requests"})
+        acquired_slot = True
         if req.skill_id == "summarise-with-memory":
             from .workflow import summarise_with_memory
 
-            return await summarise_with_memory(
+            result = await summarise_with_memory(
                 subject, req.prompt, req.skill_id, req.model, req.summary_words, req.inject_tool_output
             )
-        from .skill_runner import run_generic_skill
+        else:
+            from .skill_runner import run_generic_skill
 
-        return await run_generic_skill(
-            subject, req.prompt, req.skill_id, req.model, req.summary_words, req.inject_tool_output
-        )
+            result = await run_generic_skill(
+                subject, req.prompt, req.skill_id, req.model, req.summary_words, req.inject_tool_output
+            )
+        if isinstance(result, dict):
+            operational_metrics.set_trace_id(result.get("trace_id"))
+        snapshot = operational_metrics.snapshot(status="success")
+        await run_db(operational_metrics.persist_snapshot, snapshot)
+        return result
+    except HTTPException as exc:
+        snapshot = operational_metrics.error_snapshot(exc.status_code, exc.detail)
+        await run_db(operational_metrics.persist_snapshot, snapshot)
+        raise
+    except Exception as exc:
+        snapshot = operational_metrics.exception_snapshot(exc)
+        await run_db(operational_metrics.persist_snapshot, snapshot)
+        raise
     finally:
-        usage.release_slot(subject.tenant_id, subject.sub, mc)
+        if acquired_slot:
+            usage.release_slot(subject.tenant_id, subject.sub, mc)
+        try:
+            operational_metrics.reset_chat_turn(metrics_token)
+        except Exception:
+            pass
 
 
 @app.post("/v1/runtime/exec")

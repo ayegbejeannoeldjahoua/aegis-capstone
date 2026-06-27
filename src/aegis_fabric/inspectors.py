@@ -10,6 +10,7 @@ commands). Findings are emitted to the audit log by the caller (see skill_runner
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -208,5 +209,13 @@ def get_pipeline() -> InspectorPipeline:
 
 
 def inspect(stage, text, *, tool_id=None, args=None, egress_domain=None, tenant_id=None):
+    start = time.perf_counter()
     ctx = InspectionContext(stage=stage, text=text or "", tool_id=tool_id, args=args or {}, egress_domain=egress_domain, tenant_id=tenant_id)
-    return get_pipeline().run(ctx)
+    result, findings = get_pipeline().run(ctx)
+    try:
+        from . import operational_metrics
+
+        operational_metrics.record_security_findings((time.perf_counter() - start) * 1000.0, findings)
+    except Exception:
+        pass
+    return result, findings

@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import operator
 import re
+import time
 from urllib.parse import urlparse
 
 
@@ -191,12 +192,23 @@ def mask_memories(memories: list, pii_scope: str) -> list:
     blocked earlier by the PDP."""
     if pii_scope != "masked":
         return memories
+    start = time.perf_counter()
     out = []
+    redactions = 0
     for m in memories:
         mm = dict(m)
         if isinstance(mm.get("body"), str):
+            original = mm["body"]
             mm["body"] = redact_text(mm["body"])
+            if mm["body"] != original:
+                redactions += 1
         out.append(mm)
+    try:
+        from . import operational_metrics
+
+        operational_metrics.record_pii_inspection((time.perf_counter() - start) * 1000.0, redactions)
+    except Exception:
+        pass
     return out
 
 

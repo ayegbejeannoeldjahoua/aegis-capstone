@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -36,6 +37,7 @@ def append_event(
     reason: str | None,
     payload: dict,
 ) -> str:
+    start = time.perf_counter()
     aad = f"{trace_id}:{tenant_id}:{subject}:{action}:{resource}"
     plaintext = json.dumps({"ts": datetime.now(timezone.utc).isoformat(), **payload}, sort_keys=True).encode()
     nonce = os.urandom(12)
@@ -57,6 +59,12 @@ def append_event(
                 policy_version, values_version, decision, reason, ciphertext, nonce, aad, h, prev_hash,
             ),
         )
+        try:
+            from . import operational_metrics
+
+            operational_metrics.record_audit_write((time.perf_counter() - start) * 1000.0, action, decision)
+        except Exception:
+            pass
         return h
 
 

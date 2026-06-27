@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, field
 
 from .inspectors import inspect as inspector_inspect
@@ -127,6 +128,7 @@ def _probe(name: str, answer: str, ctx: dict) -> tuple[bool, str]:
 def verify_isa(isa: ISA, answer: str, ctx: dict) -> ISA:
     """Run each ISC's probe; stamp satisfied + evidence. Never raises -- a probe error counts as
     not satisfied with the error as evidence."""
+    start = time.perf_counter()
     for isc in isa.iscs:
         try:
             ok, evidence = _probe(isc.probe, answer, ctx)
@@ -135,6 +137,12 @@ def verify_isa(isa: ISA, answer: str, ctx: dict) -> ISA:
             isc.satisfied, isc.evidence = False, f"probe error: {e}"
             logger.warning("ISC %s probe %s error: %s", isc.id, isc.probe, e)
     isa.verified = True
+    try:
+        from . import operational_metrics
+
+        operational_metrics.record_isa_verification((time.perf_counter() - start) * 1000.0, isa.total, isa.met)
+    except Exception:
+        pass
     return isa
 
 

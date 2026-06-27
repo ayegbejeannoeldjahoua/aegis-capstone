@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 
 from . import embeddings
 from .db import get_conn
@@ -28,6 +29,7 @@ class MemoryStore:
 
     def read(self, tenant_id: str, namespace: str, query: str, limit: int = 5,
              allowed_classifications: list[str] | None = None) -> list[dict]:
+        start = time.perf_counter()
         results: list[dict] = []
         seen: set = set()
 
@@ -49,7 +51,14 @@ class MemoryStore:
                 results.append(row); seen.add(rid)
 
         # Cap the union at `limit` so prompt budgets don't blow up.
-        return results[:limit]
+        out = results[:limit]
+        try:
+            from . import operational_metrics
+
+            operational_metrics.record_retrieval((time.perf_counter() - start) * 1000.0, tenant_id, namespace, out)
+        except Exception:
+            pass
+        return out
 
     def _vector_search(self, tenant_id, namespace, vec, limit, allowed=None) -> list[dict]:
         vstr = embeddings.to_pgvector(vec)

@@ -10,6 +10,7 @@ from .auth import Subject
 from .db import run_db
 from .memory import memory_store
 from .models import ModelNotAllowed, ChatMessage, client, registry
+from . import operational_metrics
 from .policy import decide, require
 from .skills import skill_registry
 from .telemetry import tracer
@@ -34,6 +35,7 @@ async def summarise_with_memory(
     inject_tool_output: bool = False,
 ) -> dict:
     trace_id = uuid.uuid4().hex
+    operational_metrics.set_trace_id(trace_id)
     tr = tracer("aegis.workflow")
     with tr.start_as_current_span("workflow.summarise_with_memory") as span:
         span.set_attribute("tenant_id", subject.tenant_id)
@@ -136,6 +138,7 @@ async def summarise_with_memory(
         projected = estimate_tokens(prompt) + values.max_output_tokens
         ok, reason = usage.check_token_budget(tenant, subject.role, values.token_budget_per_day, projected)
         if not ok:
+            operational_metrics.mark_budget_refusal(reason)
             raise HTTPException(status_code=429, detail={"error": reason})
 
         cascade_text = ""
@@ -164,8 +167,14 @@ async def summarise_with_memory(
         result = await client.chat_with_fallbacks(
             candidates, [ChatMessage(role="system", content=(system + ((chr(10)+chr(10)+cascade_text) if cascade_text else ""))), ChatMessage(role="user", content=user)]
         )
-        used = (result.usage or {}).get("total_tokens") or (estimate_tokens(user) + estimate_tokens(result.content))
+        usage_total = (
+            (result.usage or {}).get("total_tokens")
+            or ((result.usage or {}).get("prompt_tokens") or 0) + ((result.usage or {}).get("completion_tokens") or 0)
+        )
+        used = usage_total or (estimate_tokens(user) + estimate_tokens(result.content))
         usage.add_tokens(tenant, subject.role, used)
+        if not usage_total:
+            operational_metrics.record_token_usage(used)
 
         d = await decide(subject, "memory.write",
                          {"tenant_id": tenant, "namespace": namespace, "classification": "internal",

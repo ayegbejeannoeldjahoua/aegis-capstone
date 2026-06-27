@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from .audit import append_event
 from .auth import Subject
 from .db import run_db
+from . import operational_metrics
 from .memory import memory_store
 from .settings import settings
 from .models import ChatMessage, ModelNotAllowed, client, registry
@@ -179,6 +180,7 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
                             requested_summary_words: int | None = None,
                             inject_tool_output: bool = False) -> dict:
     trace_id = uuid.uuid4().hex
+    operational_metrics.set_trace_id(trace_id)
     tr = tracer("aegis.skill_runner")
     with tr.start_as_current_span("skill_runner.run") as span:
         span.set_attribute("tenant_id", subject.tenant_id)
@@ -313,6 +315,7 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
         projected = estimate_tokens(prompt) + values.max_output_tokens
         ok, reason = usage.check_token_budget(tenant, subject.role, values.token_budget_per_day, projected)
         if not ok:
+            operational_metrics.mark_budget_refusal(reason)
             raise HTTPException(status_code=429, detail={"error": reason})
 
         system = ASSISTANT_SYSTEM_PROMPT + chr(10) + chr(10) + _governance_profile(values)
@@ -404,8 +407,14 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
         result = await client.chat_with_fallbacks(
             candidates, [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
         )
-        used = (result.usage or {}).get("total_tokens") or (estimate_tokens(user) + estimate_tokens(result.content))
+        usage_total = (
+            (result.usage or {}).get("total_tokens")
+            or ((result.usage or {}).get("prompt_tokens") or 0) + ((result.usage or {}).get("completion_tokens") or 0)
+        )
+        used = usage_total or (estimate_tokens(user) + estimate_tokens(result.content))
         usage.add_tokens(tenant, subject.role, used)
+        if not usage_total:
+            operational_metrics.record_token_usage(used)
 
         # ISA -- VERIFY each ISC against the model answer, persist, and audit.
         isa_dict = None

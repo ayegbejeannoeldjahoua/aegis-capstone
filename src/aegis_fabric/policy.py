@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -50,6 +52,7 @@ async def decide(
         }
     }
     url = f"{settings.opa_url}/v1/data/{settings.opa_package.replace('.', '/')}/result"
+    start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=settings.opa_timeout_seconds) as client:
             resp = await client.post(url, json=payload)
@@ -74,7 +77,19 @@ async def decide(
     else:
         allow = bool(result.get("allow"))
         reasons = result.get("reasons") or []
-    return PolicyDecision(allow=allow, reasons=reasons, decision="allow" if allow else "deny")
+    decision = "allow" if allow else "deny"
+    try:
+        from . import operational_metrics
+
+        operational_metrics.record_policy_decision(
+            (time.perf_counter() - start) * 1000.0,
+            decision,
+            action,
+            reasons,
+        )
+    except Exception:
+        pass
+    return PolicyDecision(allow=allow, reasons=reasons, decision=decision)
 
 
 def require(decision: PolicyDecision) -> None:
