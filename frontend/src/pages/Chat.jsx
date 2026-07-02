@@ -79,7 +79,10 @@ export default function Chat({ profile, onHome }) {
       const r = await api("/v1/ask", { method: "POST", body: { prompt: text, skill_id: "assistant" } });
       const meta = [r.model && `model ${r.model}`, r.trace_id && `trace ${String(r.trace_id).slice(0, 8)}`]
         .filter(Boolean).join(" · ");
-      setLog((l) => [...l, { role: "assistant", text: r.answer || "(no answer returned)", meta, docs: Array.isArray(r.documents) ? r.documents : [], findings: Array.isArray(r.inspector_findings) ? r.inspector_findings : [], isa: r.isa || null, trace_id: r.trace_id || null, skill_id: r.skill_id || "assistant" }]);
+      const findings = Array.isArray(r.visible_inspector_findings)
+        ? r.visible_inspector_findings
+        : (Array.isArray(r.inspector_findings) ? r.inspector_findings.filter((f) => f?.display !== false) : []);
+      setLog((l) => [...l, { role: "assistant", text: r.answer || "(no answer returned)", meta, docs: Array.isArray(r.documents) ? r.documents : [], findings, isa: r.isa || null, trace_id: r.trace_id || null, skill_id: r.skill_id || "assistant" }]);
     } catch (e) {
       setLog((l) => [...l, { role: "error", text: `Refused: ${String(e.message || e)}` }]);
     } finally { setBusy(false); }
@@ -171,7 +174,8 @@ export default function Chat({ profile, onHome }) {
 }
 
 function SecurityFindings({ findings }) {
-  const rows = (findings || []).map(securityFinding);
+  const rows = (findings || []).filter((f) => f?.display !== false).map(securityFinding);
+  if (rows.length === 0) return null;
   return (
     <div className="bubble-docs aegis-bubble-docs aegis-security-findings">
       <small><AlertTriangle size={11} /> Security findings ({rows.length})</small>

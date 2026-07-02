@@ -350,8 +350,9 @@ _CATEGORY_PATTERNS = {
 _SECURITY_RELEVANCE_PROMPT = re.compile(
     r"\b(prompt[- ]?injection|injection canar(?:y|ies)|canar(?:y|ies)|suspicious instructions?|"
     r"unsafe instructions?|untrusted(?: source| content| data)?|role[- ]?escalation|audit[- ]?(?:skip|bypass)|"
-    r"audit ledger|policy override|tool misuse|tool[- ]?output|data[- ]?exfiltration|exfiltrat|"
-    r"ignore (?:all )?previous instructions|malicious instructions?|jailbreak)\b",
+    r"audit ledger|audit logging|access control|grant role|capability grants?|policy override|tool misuse|"
+    r"tool[- ]?output|data[- ]?exfiltration|exfiltrat|unauthorized memory write|cross[- ]?tenant access|"
+    r"security findings?|inspector findings?|ignore (?:all )?previous instructions|malicious instructions?|jailbreak)\b",
     re.I,
 )
 _FINDING_SURFACE_TEXT = re.compile(
@@ -609,10 +610,61 @@ def _has_requested_non_canary_document(prompt: str, documents: list[dict] | None
     return False
 
 
-def _finding_matches_prompt(prompt: str, finding: dict) -> bool:
+def _inspector_finding_display_reason(
+    prompt: str,
+    finding: dict,
+    retrieved_documents: list[dict] | None = None,
+    answer: str | None = None,
+) -> str | None:
+    if not isinstance(finding, dict):
+        return None
+    if _user_requests_malicious_execution(prompt or "") or _answer_attempts_malicious_action(answer or ""):
+        return "answer_safety"
     if _SECURITY_RELEVANCE_PROMPT.search(prompt or ""):
-        return True
-    return _text_mentions_title(prompt or "", finding.get("title") or finding.get("memory_id"))
+        return "security_prompt"
+    if _text_mentions_title(prompt or "", finding.get("title") or finding.get("memory_id")):
+        return "requested_canary_document"
+    if any(
+        isinstance(doc, dict)
+        and doc.get("is_injection_canary")
+        and _text_mentions_title(prompt or "", doc.get("title"))
+        and _text_mentions_title(doc.get("title"), finding.get("title"))
+        for doc in (retrieved_documents or [])
+    ):
+        return "requested_canary_document"
+    return None
+
+
+def is_inspector_finding_user_visible(
+    prompt: str,
+    finding: dict,
+    retrieved_documents: list[dict] | None = None,
+    requested_refs: list[str] | None = None,
+    answer_context: dict | None = None,
+) -> tuple[bool, str]:
+    reason = _inspector_finding_display_reason(
+        prompt,
+        finding,
+        retrieved_documents,
+        (answer_context or {}).get("answer"),
+    )
+    return bool(reason), reason or "incidental_unrelated_retrieval"
+
+
+def filter_visible_inspector_findings(
+    prompt: str,
+    findings,
+    retrieved_documents: list[dict] | None = None,
+    answer: str | None = None,
+) -> list[dict]:
+    visible: list[dict] = []
+    for finding in (findings or []):
+        if not isinstance(finding, dict):
+            continue
+        reason = _inspector_finding_display_reason(prompt, finding, retrieved_documents, answer)
+        if reason:
+            visible.append({**finding, "display": True, "display_reason": reason})
+    return visible
 
 
 def _relevant_inspector_findings(
@@ -621,26 +673,7 @@ def _relevant_inspector_findings(
     documents: list[dict] | None = None,
     answer: str | None = None,
 ) -> list[dict]:
-    valid = [f for f in (findings or []) if isinstance(f, dict)]
-    if not valid:
-        return []
-    if _user_requests_malicious_execution(prompt or "") or _answer_attempts_malicious_action(answer or ""):
-        return valid
-
-    relevant: list[dict] = []
-    for finding in valid:
-        if _finding_matches_prompt(prompt or "", finding):
-            relevant.append(finding)
-            continue
-        if any(
-            isinstance(doc, dict)
-            and doc.get("is_injection_canary")
-            and _text_mentions_title(prompt or "", doc.get("title"))
-            and _text_mentions_title(doc.get("title"), finding.get("title"))
-            for doc in (documents or [])
-        ):
-            relevant.append(finding)
-    return relevant
+    return filter_visible_inspector_findings(prompt, findings, documents, answer)
 
 
 def _canary_finding_applies_to_row(row: dict, findings: list[dict]) -> bool:
@@ -1026,10 +1059,14 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
             tool_outputs.append({"tool": tid, "output": run_tool(tid, args)})
 
         all_retrieval_docs_meta = _retrieval_documents(memories, retrieved_docs, tenant)
-        relevant_inspector_findings = _relevant_inspector_findings(prompt, inspector_findings, all_retrieval_docs_meta)
+        prompt_visible_inspector_findings = filter_visible_inspector_findings(
+            prompt,
+            inspector_findings,
+            all_retrieval_docs_meta,
+        )
         retrieval_docs_meta = _filter_retrieval_documents_for_relevance(
             all_retrieval_docs_meta,
-            relevant_inspector_findings,
+            prompt_visible_inspector_findings,
         )
 
         # 4) governed model call (purpose + output-token ceiling enforced by the PDP)
@@ -1101,8 +1138,8 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
             if doc_access_denied:
                 scope += " Document retrieval is not enabled for this role, so no documents were available."
             system = system + "\n\n" + scope
-        if relevant_inspector_findings:
-            system = system + "\n\n" + _inspector_findings_context(relevant_inspector_findings)
+        if prompt_visible_inspector_findings:
+            system = system + "\n\n" + _inspector_findings_context(prompt_visible_inspector_findings)
         # ISA — scaffold the per-task "definition of done" before the model call so the probes
         # have a stable record to verify against. Created in-memory; persisted + audited after VERIFY.
         from . import isa as _isa_mod
@@ -1123,7 +1160,7 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
             _canary_blocks = []
             for _m in memories[:8]:
                 if _is_injection_canary(_m):
-                    if _canary_finding_applies_to_row(_m, relevant_inspector_findings):
+                    if _canary_finding_applies_to_row(_m, prompt_visible_inspector_findings):
                         _canary_blocks.append(_canary_context_block(_m))
                     continue
                 _title = _display_title(_m)
@@ -1159,6 +1196,16 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
         user = "\n\n".join(parts)
         result = await client.chat_with_fallbacks(
             candidates, [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
+        )
+        visible_inspector_findings = filter_visible_inspector_findings(
+            prompt,
+            inspector_findings,
+            all_retrieval_docs_meta,
+            result.content,
+        )
+        retrieval_docs_meta = _filter_retrieval_documents_for_relevance(
+            all_retrieval_docs_meta,
+            visible_inspector_findings,
         )
         answer_content = ensure_answer_acknowledges_inspector_findings(
             result.content,
@@ -1231,6 +1278,7 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
                 "model": result.model, "provider": result.provider, "memory_id": mem_id,
                 "retrieval_intent": retrieval_intent, "retrieval_reason": retrieval_reason,
                 "inspector_findings": inspector_findings,
+                "visible_inspector_findings": visible_inspector_findings,
                 "isa": isa_dict,
                 "tools_used": [t["tool"] for t in tool_outputs], "write_pending": write_pending,
                 "documents": retrieval_docs_meta,
