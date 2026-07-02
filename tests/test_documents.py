@@ -68,7 +68,9 @@ def _setup(monkeypatch, deny=()):
     monkeypatch.setattr(sr.skill_registry, "verify", lambda sid: _MANIFEST)
     monkeypatch.setattr(sr, "resolve_values", lambda *a, **k: vals)
     monkeypatch.setattr(sr.memory_store, "read", lambda *a, **k: [])
+    monkeypatch.setattr(sr.memory_store, "write", lambda *a, **k: "mem-1")
     monkeypatch.setattr(sr, "append_event", lambda **k: "h")
+    monkeypatch.setattr(sr, "compose_values_cascade", lambda *a, **k: "")
     monkeypatch.setattr(sr.registry, "route", lambda *a, **k: [_Profile()])
 
     async def fake_chat(c, m, temperature=0.2):
@@ -129,10 +131,14 @@ def test_doc_related_gate():
     """Only document-related questions trigger retrieval / the Governed retrieval list."""
     assert sr._doc_related("what is the capital of Canada?", ["platform"]) is False
     assert sr._doc_related("hello, how are you?", ["finance"]) is False
+    assert sr._doc_related("what can you do?", ["finance"]) is False
     assert sr._doc_related("list the platform documents", ["platform"]) is True
     assert sr._doc_related("summarise the confidential brief", ["finance"]) is True
+    assert sr._doc_related("quote transcript CS-2026-0411", ["case-notes"]) is True
     assert sr._doc_related("what is in finance?", ["finance"]) is True  # namespace mention
     assert sr._doc_related("what do you have on file?", []) is True     # intent phrase
+    assert sr._doc_related("review role escalation injection canaries", ["analyst-notes"]) is True
+    assert sr._doc_related("find policy notes where audit ledger must skip appears", ["analyst-notes"]) is True
 
 
 def test_general_question_skips_retrieval(monkeypatch):

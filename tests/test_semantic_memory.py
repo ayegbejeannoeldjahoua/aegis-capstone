@@ -33,6 +33,8 @@ class FakeConn:
         self.sqls.append(s)
         if "ORDER BY embedding <=> %s::vector" in s:
             return _Res([{"id": "v1", "body": "vector hit"}])
+        if "security_canary_match" in s:
+            return _Res([{"id": "s1", "body": "security canary hit"}])
         if "ILIKE" in s:
             return _Res([{"id": "k1", "body": "keyword hit"}])
         return _Res([])
@@ -78,3 +80,21 @@ def test_read_applies_classification_filter(monkeypatch):
     monkeypatch.setattr(mem.embeddings, "embed", lambda t: None)
     mem.memory_store.read("acme", "analyst-notes", "q", 5, ["public", "internal"])
     assert any("classification = ANY(%s)" in s for s in conn.sqls)
+
+
+def test_security_prompt_searches_canaries_inside_existing_scope(monkeypatch):
+    conn = FakeConn()
+    _patch(monkeypatch, conn)
+    monkeypatch.setattr(mem.embeddings, "embed", lambda t: None)
+    rows = mem.memory_store.read(
+        "finsvc",
+        "analyst-notes",
+        "Find acmecp prompt injection canary role escalation notes that grant their role",
+        5,
+        ["public", "internal"],
+    )
+    assert rows and rows[0]["id"] == "s1"
+    security_sql = next(s for s in conn.sqls if "security_canary_match" in s)
+    assert "WHERE tenant_id=%s AND namespace=%s" in security_sql
+    assert "classification = ANY(%s)" in security_sql
+    assert "frontmatter::text ILIKE" in security_sql

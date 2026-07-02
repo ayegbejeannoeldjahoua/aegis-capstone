@@ -22,6 +22,43 @@ import {
   cx,
 } from "../components/figma/AegisPrimitives.jsx";
 
+function formatScore(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : null;
+}
+
+function formatReason(value) {
+  if (!value) return null;
+  return String(value).replaceAll("_", " ");
+}
+
+function retrievalDoc(doc) {
+  const namespace = doc?.namespace || doc?.team || doc?.source || "unknown";
+  const classification = doc?.classification || "unclassified";
+  return {
+    title: doc?.title || doc?.doc_id || namespace,
+    namespace,
+    classification,
+    tenant: doc?.tenant_id || null,
+    score: formatScore(doc?.score ?? doc?.similarity),
+    reason: formatReason(doc?.retrieval_reason || doc?.reason),
+    isInjectionCanary: Boolean(doc?.is_injection_canary),
+    canaryType: formatReason(doc?.canary_type),
+  };
+}
+
+function securityFinding(finding) {
+  return {
+    title: finding?.title || finding?.memory_id || "Retrieved content",
+    namespace: finding?.namespace || "unknown",
+    classification: finding?.classification || "unclassified",
+    decision: finding?.decision || "warn",
+    action: formatReason(finding?.action),
+    reason: formatReason(finding?.detail || finding?.reason),
+    canaryType: formatReason(finding?.canary_type),
+  };
+}
+
 export default function Chat({ profile, onHome }) {
   const [prompt, setPrompt] = useState("");
   const [log, setLog] = useState([]);
@@ -42,7 +79,7 @@ export default function Chat({ profile, onHome }) {
       const r = await api("/v1/ask", { method: "POST", body: { prompt: text, skill_id: "assistant" } });
       const meta = [r.model && `model ${r.model}`, r.trace_id && `trace ${String(r.trace_id).slice(0, 8)}`]
         .filter(Boolean).join(" · ");
-      setLog((l) => [...l, { role: "assistant", text: r.answer || "(no answer returned)", meta, docs: r.documents || [], isa: r.isa || null, trace_id: r.trace_id || null, skill_id: r.skill_id || "assistant" }]);
+      setLog((l) => [...l, { role: "assistant", text: r.answer || "(no answer returned)", meta, docs: Array.isArray(r.documents) ? r.documents : [], findings: Array.isArray(r.inspector_findings) ? r.inspector_findings : [], isa: r.isa || null, trace_id: r.trace_id || null, skill_id: r.skill_id || "assistant" }]);
     } catch (e) {
       setLog((l) => [...l, { role: "error", text: `Refused: ${String(e.message || e)}` }]);
     } finally { setBusy(false); }
@@ -102,14 +139,8 @@ export default function Chat({ profile, onHome }) {
                 )}
                 <article className={`bubble aegis-bubble ${m.role}`}>
                   <div className="bubble-body">{m.text}</div>
-                  {m.docs && m.docs.length > 0 && (
-                    <div className="bubble-docs aegis-bubble-docs">
-                      <small><FileText size={11} /> Governed retrieval ({m.docs.length})</small>
-                      <ul>{m.docs.map((d, j) => (
-                        <li key={j}><small>{d.team}/{d.classification} - {d.title}</small></li>
-                      ))}</ul>
-                    </div>
-                  )}
+                  {m.findings && m.findings.length > 0 && <SecurityFindings findings={m.findings} />}
+                  {m.docs && m.docs.length > 0 && <RetrievalPanel docs={m.docs} />}
                   {m.isa && <DoneCriteria isa={m.isa} />}
                   {m.role === "assistant" && m.trace_id && <Thumbs trace_id={m.trace_id} skill_id={m.skill_id} />}
                   {m.meta && <small className="bubble-meta">{m.meta}</small>}
@@ -135,6 +166,63 @@ export default function Chat({ profile, onHome }) {
           </form>
         </main>
       </div>
+    </div>
+  );
+}
+
+function SecurityFindings({ findings }) {
+  const rows = (findings || []).map(securityFinding);
+  return (
+    <div className="bubble-docs aegis-bubble-docs aegis-security-findings">
+      <small><AlertTriangle size={11} /> Security findings ({rows.length})</small>
+      <ol className="retrieval-list">
+        {rows.map((f, j) => (
+          <li key={`${f.title}-${f.namespace}-${f.classification}-${j}`} className="retrieval-item security-finding-item">
+            <span className="security-finding-title">
+              {f.title}
+              <span className="retrieval-canary-badge">{f.decision}</span>
+            </span>
+            <span className="retrieval-meta">
+              <span>{f.namespace} / {f.classification}</span>
+              {f.canaryType && <span>{f.canaryType}</span>}
+              {f.action && <span>{f.action}</span>}
+              {f.reason && <span>{f.reason}</span>}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function RetrievalPanel({ docs }) {
+  const seen = new Set();
+  const rows = docs.map(retrievalDoc).filter((d) => {
+    const key = `${d.title}|${d.namespace}|${d.classification}|${d.tenant || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return (
+    <div className="bubble-docs aegis-bubble-docs">
+      <small><FileText size={11} /> Governed retrieval ({rows.length})</small>
+      <ol className="retrieval-list">
+        {rows.map((d, j) => (
+          <li key={`${d.title}-${d.namespace}-${d.classification}-${j}`} className="retrieval-item">
+            <span className="retrieval-title">
+              {d.title}
+              {d.isInjectionCanary && <span className="retrieval-canary-badge">canary</span>}
+            </span>
+            <span className="retrieval-meta">
+              <span>{d.namespace} / {d.classification}</span>
+              {d.tenant && <span>tenant {d.tenant}</span>}
+              {d.score && <span>score {d.score}</span>}
+              {d.canaryType && <span>{d.canaryType}</span>}
+              {d.reason && <span>{d.reason}</span>}
+            </span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

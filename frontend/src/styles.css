@@ -1146,7 +1146,7 @@ table { width: 100%; }
   padding: 12px;
   background: rgba(255,255,255,.03);
   border: 1px solid rgba(255,255,255,.05);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 
 .aegis-bubble-docs small:first-child {
@@ -1157,14 +1157,85 @@ table { width: 100%; }
   font-family: "SF Mono", Menlo, Consolas, monospace;
 }
 
-.aegis-bubble-docs ul {
-  margin: 8px 0 0;
-  padding-left: 18px;
+.aegis-security-findings {
+  background: rgba(251, 191, 36, .08);
+  border-color: rgba(251, 191, 36, .24);
 }
 
-.aegis-bubble-docs li small {
+.aegis-security-findings small:first-child {
+  color: var(--amber);
+}
+
+.retrieval-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style-position: inside;
+}
+
+.retrieval-item {
+  padding: 8px 0;
+  border-top: 1px solid rgba(255,255,255,.05);
+  color: var(--muted);
+}
+
+.retrieval-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.retrieval-title {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.security-finding-title {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.retrieval-canary-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 6px;
+  border: 1px solid rgba(251, 191, 36, .34);
+  border-radius: 999px;
+  background: rgba(251, 191, 36, .12);
+  color: var(--amber);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.retrieval-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
   color: var(--muted);
   font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.retrieval-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 999px;
+  background: rgba(255,255,255,.025);
 }
 
 .aegis-chat-input {

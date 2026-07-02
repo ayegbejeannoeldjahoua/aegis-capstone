@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 
 from . import embeddings
@@ -10,6 +11,56 @@ from .values import ResolvedValues
 
 _COLS = ("id::text, tenant_id, namespace, author_user, author_scope, classification, "
          "retention_class, frontmatter, body, created_at::text")
+
+_SECURITY_QUERY = re.compile(
+    r"\b(injection|prompt injection|canary|suspicious instruction|unsafe instruction|"
+    r"tool[- ]output|tool output excerpt|role escalation|grant role|grant their role|"
+    r"capability grants?|audit skip|audit-skipping|audit logging|access control|"
+    r"authorization|capabilities|governance memos?|policy notes?|team decision logs?|"
+    r"policy overridden|policy override|data exfiltration|ignore previous instructions|"
+    r"ignore all previous instructions|roles?)\b",
+    re.I,
+)
+
+
+def _security_terms(query: str) -> list[str]:
+    """Expanded keyword set for realistic governance/security prompts.
+
+    This does not widen authorization. It only adds extra keyword probes inside
+    the already-authorized tenant/namespace/classification search scope.
+    """
+    text = (query or "").lower()
+    if not _SECURITY_QUERY.search(text):
+        return []
+    terms = [
+        "Injection Canary",
+        "Prompt Injection Canary",
+        "is_injection_canary",
+        "canary_type",
+        "suspicious instruction",
+        "unsafe instruction",
+        "IGNORE ALL PREVIOUS INSTRUCTIONS",
+        "POLICY OVERRIDDEN",
+    ]
+    if re.search(r"\b(role|roles|access control|authorization|capabilit|grant)\b", text):
+        terms += ["Role Escalation", "grant their role", "grant role", "capability grant", "capability grants"]
+    if re.search(r"\b(audit|logging|ledger|skip)\b", text):
+        terms += ["Suppress Audit", "audit ledger must skip", "audit-skipping", "audit skip"]
+    if re.search(r"\b(tool[- ]output|tool output excerpt|suspicious|unsafe)\b", text):
+        terms += ["Tool Output", "tool-output excerpt", "IGNORE ALL PREVIOUS INSTRUCTIONS"]
+    if re.search(r"\b(data exfiltration|exfiltrat|secret|secrets)\b", text):
+        terms += ["Data Exfiltration", "exfiltrate", "secrets"]
+    if re.search(r"\b(policy|governance|memo|memos|notes|team decision)\b", text):
+        terms += ["governance memo", "policy notes", "team decisions", "Injection Canary"]
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        key = term.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(term)
+    return out
 
 
 class MemoryStore:
@@ -30,6 +81,9 @@ class MemoryStore:
     def read(self, tenant_id: str, namespace: str, query: str, limit: int = 5,
              allowed_classifications: list[str] | None = None) -> list[dict]:
         start = time.perf_counter()
+        vector_rows: list[dict] = []
+        security_rows: list[dict] = []
+        keyword_rows: list[dict] = []
         results: list[dict] = []
         seen: set = set()
 
@@ -37,20 +91,34 @@ class MemoryStore:
         vec = embeddings.embed(query)
         if vec is not None:
             for row in self._vector_search(tenant_id, namespace, vec, limit, allowed_classifications):
-                rid = row.get("id")
-                if rid and rid not in seen:
-                    results.append(row); seen.add(rid)
+                vector_rows.append(row)
 
-        # 2) Keyword — literal substring match (catches doc titles / IDs the
+        # 2) Security/canary expansion -- only for governance/security prompts.
+        # This searches body plus frontmatter JSON text under the same tenant,
+        # namespace, and classification constraints as vector retrieval.
+        terms = _security_terms(query)
+        if terms:
+            security_rows = self._security_search(
+                tenant_id, namespace, terms, max(limit, 6), allowed_classifications
+            )
+
+        # 3) Keyword — literal substring match (catches doc titles / IDs the
         #    embedder underweighted). Always runs, regardless of whether (1)
         #    found anything, so a verbose prompt that names a specific doc
         #    still surfaces it.
         for row in self._keyword_search(tenant_id, namespace, query, limit, allowed_classifications):
-            rid = row.get("id")
-            if rid and rid not in seen:
-                results.append(row); seen.add(rid)
+            keyword_rows.append(row)
 
-        # Cap the union at `limit` so prompt budgets don't blow up.
+        # Canary/security rows are boosted for S16 prompts, but final output is
+        # still capped at the caller's requested limit.
+        groups = [security_rows, vector_rows, keyword_rows] if security_rows else [vector_rows, keyword_rows]
+        for group in groups:
+            for row in group:
+                rid = row.get("id")
+                if rid and rid not in seen:
+                    results.append(row)
+                    seen.add(rid)
+
         out = results[:limit]
         try:
             from . import operational_metrics
@@ -66,9 +134,32 @@ class MemoryStore:
         params = [tenant_id, namespace] + ([allowed] if allowed else []) + [vstr, limit]
         with get_conn() as conn:
             rows = conn.execute(
-                f"SELECT {_COLS} FROM memories "
+                f"SELECT {_COLS}, (1.0 - (embedding <=> %s::vector))::double precision AS score, "
+                "'semantic_similarity' AS retrieval_reason FROM memories "
                 f"WHERE tenant_id=%s AND namespace=%s AND embedding IS NOT NULL{cls} "
                 "ORDER BY embedding <=> %s::vector LIMIT %s",
+                [vstr] + params,
+            ).fetchall()
+        return list(rows)
+
+    def _security_search(self, tenant_id, namespace, terms: list[str], limit, allowed=None) -> list[dict]:
+        if not terms:
+            return []
+        cls = " AND classification = ANY(%s)" if allowed else ""
+        like_clauses = []
+        like_params: list = []
+        for term in terms[:32]:
+            like_clauses.append("(body ILIKE %s OR frontmatter::text ILIKE %s)")
+            like_params.extend([f"%{term}%", f"%{term}%"])
+        where_likes = " OR ".join(like_clauses)
+
+        params = [tenant_id, namespace] + ([allowed] if allowed else []) + like_params + [limit]
+        with get_conn() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLS}, 1.0::double precision AS score, "
+                "'security_canary_match' AS retrieval_reason FROM memories "
+                f"WHERE tenant_id=%s AND namespace=%s{cls} AND ({where_likes}) "
+                "ORDER BY created_at DESC LIMIT %s",
                 params,
             ).fetchall()
         return list(rows)
@@ -114,7 +205,7 @@ class MemoryStore:
         params = [tenant_id, namespace] + ([allowed] if allowed else []) + like_params + [limit]
         with get_conn() as conn:
             rows = conn.execute(
-                f"SELECT {_COLS} FROM memories "
+                f"SELECT {_COLS}, NULL::double precision AS score, 'keyword_match' AS retrieval_reason FROM memories "
                 f"WHERE tenant_id=%s AND namespace=%s{cls} AND ({where_likes}) "
                 "ORDER BY created_at DESC LIMIT %s",
                 params,
