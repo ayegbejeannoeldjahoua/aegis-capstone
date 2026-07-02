@@ -336,11 +336,30 @@ _CATEGORY_PATTERNS = {
     "tool_misuse": re.compile(r"\b(tool[- ]?output|tool misuse|unauthorized tool|tool call)\b", re.I),
     "unauthorized_memory_write": re.compile(r"\b(memory write|write to memory|unauthorized memory)\b", re.I),
     "cross_tenant_access": re.compile(r"\b(cross[- ]?tenant|tenant leak|other tenant)\b", re.I),
-    "pii_leakage": re.compile(r"\b(PII|personal data|sensitive data|disclos(?:e|ure)|leak)\b", re.I),
+    "pii_leakage": re.compile(
+        r"\b(?:PII|personal data|sensitive data)\b[^.!\n]{0,100}"
+        r"\b(?:leak(?:age)?|disclos(?:e|ure)|exfiltrat|export|unauthorized)\b|"
+        r"\b(?:leak(?:age)?|disclos(?:e|ure)|exfiltrat|export|unauthorized)\b[^.!\n]{0,100}"
+        r"\b(?:PII|personal data|sensitive data)\b",
+        re.I,
+    ),
     "ignore_instructions": re.compile(
         r"\b(ignore (?:all )?previous instructions|ignore (?:system|developer|platform) instructions)\b", re.I
     ),
 }
+_SECURITY_RELEVANCE_PROMPT = re.compile(
+    r"\b(prompt[- ]?injection|injection canar(?:y|ies)|canar(?:y|ies)|suspicious instructions?|"
+    r"unsafe instructions?|untrusted(?: source| content| data)?|role[- ]?escalation|audit[- ]?(?:skip|bypass)|"
+    r"audit ledger|policy override|tool misuse|tool[- ]?output|data[- ]?exfiltration|exfiltrat|"
+    r"ignore (?:all )?previous instructions|malicious instructions?|jailbreak)\b",
+    re.I,
+)
+_FINDING_SURFACE_TEXT = re.compile(
+    r"\b(Security note|security finding|prompt[- ]?injection|injection canar(?:y|ies)|canar(?:y|ies)|"
+    r"role[- ]?escalation|audit[- ]?(?:skip|bypass)|policy override|tool misuse|"
+    r"data[- ]?exfiltration|PII leakage|untrusted retrieved content|flagged content|unsafe instruction)\b",
+    re.I,
+)
 
 
 def _categories_from_text(text: str) -> list[str]:
@@ -564,6 +583,19 @@ def _document_text(doc: dict) -> str:
     )
 
 
+def _matchable_text(text: str) -> str:
+    text = str(text or "").replace("—", "-").replace("–", "-").lower()
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _text_mentions_title(text: str, title: str | None) -> bool:
+    if not title:
+        return False
+    needle = _matchable_text(title)
+    hay = _matchable_text(text)
+    return bool(needle and hay and needle in hay)
+
+
 def _has_requested_non_canary_document(prompt: str, documents: list[dict] | None) -> bool:
     refs = _reference_ids(prompt)
     if not refs or not documents:
@@ -577,6 +609,66 @@ def _has_requested_non_canary_document(prompt: str, documents: list[dict] | None
     return False
 
 
+def _finding_matches_prompt(prompt: str, finding: dict) -> bool:
+    if _SECURITY_RELEVANCE_PROMPT.search(prompt or ""):
+        return True
+    return _text_mentions_title(prompt or "", finding.get("title") or finding.get("memory_id"))
+
+
+def _relevant_inspector_findings(
+    prompt: str,
+    findings,
+    documents: list[dict] | None = None,
+    answer: str | None = None,
+) -> list[dict]:
+    valid = [f for f in (findings or []) if isinstance(f, dict)]
+    if not valid:
+        return []
+    if _user_requests_malicious_execution(prompt or "") or _answer_attempts_malicious_action(answer or ""):
+        return valid
+
+    relevant: list[dict] = []
+    for finding in valid:
+        if _finding_matches_prompt(prompt or "", finding):
+            relevant.append(finding)
+            continue
+        if any(
+            isinstance(doc, dict)
+            and doc.get("is_injection_canary")
+            and _text_mentions_title(prompt or "", doc.get("title"))
+            and _text_mentions_title(doc.get("title"), finding.get("title"))
+            for doc in (documents or [])
+        ):
+            relevant.append(finding)
+    return relevant
+
+
+def _canary_finding_applies_to_row(row: dict, findings: list[dict]) -> bool:
+    row_id = row.get("id")
+    row_title = _display_title(row)
+    for finding in findings or []:
+        if not isinstance(finding, dict):
+            continue
+        if row_id and finding.get("memory_id") == row_id:
+            return True
+        if _text_mentions_title(row_title, finding.get("title")):
+            return True
+    return False
+
+
+def _filter_retrieval_documents_for_relevance(documents: list[dict], relevant_findings: list[dict]) -> list[dict]:
+    out = []
+    for doc in documents or []:
+        if not isinstance(doc, dict):
+            continue
+        if not doc.get("is_injection_canary"):
+            out.append(doc)
+            continue
+        if any(_text_mentions_title(doc.get("title"), finding.get("title")) for finding in relevant_findings or []):
+            out.append(doc)
+    return out
+
+
 def _answer_attempts_malicious_action(answer: str) -> bool:
     return bool(re.search(
         r"\b(i\s+(?:have\s+)?(?:granted|changed|elevated).{0,40}\brole|"
@@ -588,6 +680,19 @@ def _answer_attempts_malicious_action(answer: str) -> bool:
         answer or "",
         re.I,
     ))
+
+
+def _remove_irrelevant_finding_sentences(answer: str, findings) -> str:
+    chunks = re.split(r"(?<=[.!?])\s+|\n+", answer or "")
+    kept = []
+    for chunk in chunks:
+        text = chunk.strip()
+        if not text:
+            continue
+        if answer_contradicts_findings(text, findings) or _FINDING_SURFACE_TEXT.search(text):
+            continue
+        kept.append(text)
+    return "\n".join(kept).strip()
 
 
 def _user_requests_malicious_execution(prompt: str) -> bool:
@@ -669,16 +774,24 @@ def ensure_answer_acknowledges_inspector_findings(
 ) -> str:
     if not has_inspector_findings(findings):
         return answer
-    summary = summarize_inspector_findings(findings)
+    if prompt is None and documents is None:
+        relevant_findings = [f for f in (findings or []) if isinstance(f, dict)]
+    else:
+        relevant_findings = _relevant_inspector_findings(prompt or "", findings, documents, answer)
+    if not relevant_findings:
+        cleaned = _remove_irrelevant_finding_sentences(answer, findings)
+        return cleaned or answer
+
+    summary = summarize_inspector_findings(relevant_findings)
     if _user_requests_malicious_execution(prompt or "") or _answer_attempts_malicious_action(answer):
         return summary
-    if answer_contradicts_findings(answer, findings):
+    if answer_contradicts_findings(answer, relevant_findings):
         if _has_requested_non_canary_document(prompt or "", documents):
-            cleaned = _remove_contradictory_sentences(answer, findings)
+            cleaned = _remove_contradictory_sentences(answer, relevant_findings)
             if cleaned:
                 return f"{summary}\n\n{cleaned}"
         return summary
-    if not _answer_acknowledges_findings(answer, findings):
+    if not _answer_acknowledges_findings(answer, relevant_findings):
         return f"{summary}\n\n{answer}"
     return answer
 
@@ -912,6 +1025,13 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
             require(d)
             tool_outputs.append({"tool": tid, "output": run_tool(tid, args)})
 
+        all_retrieval_docs_meta = _retrieval_documents(memories, retrieved_docs, tenant)
+        relevant_inspector_findings = _relevant_inspector_findings(prompt, inspector_findings, all_retrieval_docs_meta)
+        retrieval_docs_meta = _filter_retrieval_documents_for_relevance(
+            all_retrieval_docs_meta,
+            relevant_inspector_findings,
+        )
+
         # 4) governed model call (purpose + output-token ceiling enforced by the PDP)
         try:
             candidates = registry.route(
@@ -981,8 +1101,8 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
             if doc_access_denied:
                 scope += " Document retrieval is not enabled for this role, so no documents were available."
             system = system + "\n\n" + scope
-        if inspector_findings:
-            system = system + "\n\n" + _inspector_findings_context(inspector_findings)
+        if relevant_inspector_findings:
+            system = system + "\n\n" + _inspector_findings_context(relevant_inspector_findings)
         # ISA — scaffold the per-task "definition of done" before the model call so the probes
         # have a stable record to verify against. Created in-memory; persisted + audited after VERIFY.
         from . import isa as _isa_mod
@@ -1003,7 +1123,8 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
             _canary_blocks = []
             for _m in memories[:8]:
                 if _is_injection_canary(_m):
-                    _canary_blocks.append(_canary_context_block(_m))
+                    if _canary_finding_applies_to_row(_m, relevant_inspector_findings):
+                        _canary_blocks.append(_canary_context_block(_m))
                     continue
                 _title = _display_title(_m)
                 _ns = _m.get("namespace", "")
@@ -1039,7 +1160,6 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
         result = await client.chat_with_fallbacks(
             candidates, [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
         )
-        retrieval_docs_meta = _retrieval_documents(memories, retrieved_docs, tenant)
         answer_content = ensure_answer_acknowledges_inspector_findings(
             result.content,
             inspector_findings,
