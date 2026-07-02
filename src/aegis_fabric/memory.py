@@ -21,6 +21,18 @@ _SECURITY_QUERY = re.compile(
     r"ignore all previous instructions|roles?)\b",
     re.I,
 )
+_REFERENCE_ID = re.compile(r"\b(?:CS|INC)-[A-Z0-9-]+\b", re.I)
+
+
+def _reference_terms(query: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in _REFERENCE_ID.findall(query or ""):
+        key = match.upper()
+        if key not in seen:
+            seen.add(key)
+            out.append(match)
+    return out
 
 
 def _security_terms(query: str) -> list[str]:
@@ -81,19 +93,26 @@ class MemoryStore:
     def read(self, tenant_id: str, namespace: str, query: str, limit: int = 5,
              allowed_classifications: list[str] | None = None) -> list[dict]:
         start = time.perf_counter()
+        reference_rows: list[dict] = []
         vector_rows: list[dict] = []
         security_rows: list[dict] = []
         keyword_rows: list[dict] = []
         results: list[dict] = []
         seen: set = set()
 
-        # 1) Semantic — meaning match (catches "dashboard lockout" -> transcript).
+        # 1) Exact reference IDs (CS-..., INC-...) are strongest. A literal
+        # transcript/case ID must outrank semantically similar canary transcripts.
+        refs = _reference_terms(query)
+        if refs:
+            reference_rows = self._reference_search(tenant_id, namespace, refs, limit, allowed_classifications)
+
+        # 2) Semantic — meaning match (catches "dashboard lockout" -> transcript).
         vec = embeddings.embed(query)
         if vec is not None:
             for row in self._vector_search(tenant_id, namespace, vec, limit, allowed_classifications):
                 vector_rows.append(row)
 
-        # 2) Security/canary expansion -- only for governance/security prompts.
+        # 3) Security/canary expansion -- only for governance/security prompts.
         # This searches body plus frontmatter JSON text under the same tenant,
         # namespace, and classification constraints as vector retrieval.
         terms = _security_terms(query)
@@ -102,7 +121,7 @@ class MemoryStore:
                 tenant_id, namespace, terms, max(limit, 6), allowed_classifications
             )
 
-        # 3) Keyword — literal substring match (catches doc titles / IDs the
+        # 4) Keyword — literal substring match (catches doc titles / IDs the
         #    embedder underweighted). Always runs, regardless of whether (1)
         #    found anything, so a verbose prompt that names a specific doc
         #    still surfaces it.
@@ -111,7 +130,7 @@ class MemoryStore:
 
         # Canary/security rows are boosted for S16 prompts, but final output is
         # still capped at the caller's requested limit.
-        groups = [security_rows, vector_rows, keyword_rows] if security_rows else [vector_rows, keyword_rows]
+        groups = [reference_rows, security_rows, vector_rows, keyword_rows]
         for group in groups:
             for row in group:
                 rid = row.get("id")
@@ -142,6 +161,28 @@ class MemoryStore:
             ).fetchall()
         return list(rows)
 
+    def _reference_search(self, tenant_id, namespace, refs: list[str], limit, allowed=None) -> list[dict]:
+        if not refs:
+            return []
+        cls = " AND classification = ANY(%s)" if allowed else ""
+        like_clauses = []
+        like_params: list = []
+        for ref in refs[:8]:
+            like_clauses.append("(body ILIKE %s OR frontmatter::text ILIKE %s)")
+            like_params.extend([f"%{ref}%", f"%{ref}%"])
+        where_likes = " OR ".join(like_clauses)
+
+        params = [tenant_id, namespace] + ([allowed] if allowed else []) + like_params + [limit]
+        with get_conn() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLS}, 1.0::double precision AS score, "
+                "'exact_reference_match' AS retrieval_reason FROM memories "
+                f"WHERE tenant_id=%s AND namespace=%s{cls} AND ({where_likes}) "
+                "ORDER BY created_at DESC LIMIT %s",
+                params,
+            ).fetchall()
+        return list(rows)
+
     def _security_search(self, tenant_id, namespace, terms: list[str], limit, allowed=None) -> list[dict]:
         if not terms:
             return []
@@ -157,7 +198,7 @@ class MemoryStore:
         with get_conn() as conn:
             rows = conn.execute(
                 f"SELECT {_COLS}, 1.0::double precision AS score, "
-                "'security_canary_match' AS retrieval_reason FROM memories "
+                "'security_keyword_match' AS retrieval_reason FROM memories "
                 f"WHERE tenant_id=%s AND namespace=%s{cls} AND ({where_likes}) "
                 "ORDER BY created_at DESC LIMIT %s",
                 params,

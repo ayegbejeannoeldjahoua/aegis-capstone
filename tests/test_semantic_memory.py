@@ -31,9 +31,11 @@ class FakeConn:
     def execute(self, sql, params=None):
         s = " ".join(sql.split())
         self.sqls.append(s)
+        if "exact_reference_match" in s:
+            return _Res([{"id": "r1", "body": "Customer Support Transcript CS-2026-0411"}])
         if "ORDER BY embedding <=> %s::vector" in s:
             return _Res([{"id": "v1", "body": "vector hit"}])
-        if "security_canary_match" in s:
+        if "security_keyword_match" in s:
             return _Res([{"id": "s1", "body": "security canary hit"}])
         if "ILIKE" in s:
             return _Res([{"id": "k1", "body": "keyword hit"}])
@@ -94,7 +96,22 @@ def test_security_prompt_searches_canaries_inside_existing_scope(monkeypatch):
         ["public", "internal"],
     )
     assert rows and rows[0]["id"] == "s1"
-    security_sql = next(s for s in conn.sqls if "security_canary_match" in s)
+    security_sql = next(s for s in conn.sqls if "security_keyword_match" in s)
     assert "WHERE tenant_id=%s AND namespace=%s" in security_sql
     assert "classification = ANY(%s)" in security_sql
     assert "frontmatter::text ILIKE" in security_sql
+
+
+def test_exact_reference_match_outranks_vector_for_transcript_ids(monkeypatch):
+    conn = FakeConn()
+    _patch(monkeypatch, conn)
+    monkeypatch.setattr(mem.embeddings, "embed", lambda t: [0.1, 0.2])
+    rows = mem.memory_store.read(
+        "acme",
+        "case-notes",
+        "Quote transcript CS-2026-0411",
+        5,
+        ["public", "internal", "confidential"],
+    )
+    assert rows and rows[0]["id"] == "r1"
+    assert any("exact_reference_match" in s for s in conn.sqls)

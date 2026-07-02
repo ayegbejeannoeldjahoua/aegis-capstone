@@ -167,6 +167,18 @@ _DOC_ENUM = re.compile(
     r"\b(all|every|which|what)\s+(documents?|docs?|files?|briefs?|reports?)\b|"
     r"\b(documents?|docs?|files?)\s+(do|can)\s+(i|you|we)\b|"
     r"\bshow\s+(me\s+)?(all|the\s+)?(documents?|docs?|files?)\b", re.I)
+_REFERENCE_ID = re.compile(r"\b(?:CS|INC)-[A-Z0-9-]+\b", re.I)
+
+
+def _reference_ids(text: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in _REFERENCE_ID.findall(text or ""):
+        key = match.upper()
+        if key not in seen:
+            seen.add(key)
+            out.append(match)
+    return out
 
 
 def _select_relevant(prompt: str, docs: list) -> list:
@@ -175,7 +187,18 @@ def _select_relevant(prompt: str, docs: list) -> list:
     question returns the best-matching document(s) by term overlap, so "what is in the
     confidential brief" returns the confidential brief rather than the entire corpus. Returns
     [] when nothing matches a content question (the model then explains via the scope note)."""
-    if not docs or _DOC_ENUM.search(prompt):
+    if not docs:
+        return docs
+    refs = _reference_ids(prompt)
+    if refs:
+        exact = []
+        for dcn in docs:
+            hay = " ".join(str(dcn.get(k, "")) for k in ("title", "body", "team", "classification", "doc_id")).lower()
+            if any(ref.lower() in hay for ref in refs):
+                exact.append(dcn)
+        if exact:
+            return exact
+    if _DOC_ENUM.search(prompt):
         return docs
     toks = {t for t in re.findall(r"[a-z0-9]+", prompt.lower()) if len(t) >= 4 and t not in _STOP}
     if not toks:
@@ -525,6 +548,72 @@ def _has_related_finding_ack(answer: str) -> bool:
     return bool(re.search(r"\b(but|however)[^.!\n]{0,160}\b(security finding|finding|flagged|detected|untrusted)\b", answer.lower()))
 
 
+def _document_text(doc: dict) -> str:
+    fm = _frontmatter(doc) if isinstance(doc, dict) else {}
+    return " ".join(
+        str(value or "")
+        for value in (
+            doc.get("title") if isinstance(doc, dict) else "",
+            doc.get("doc_id") if isinstance(doc, dict) else "",
+            doc.get("namespace") if isinstance(doc, dict) else "",
+            doc.get("team") if isinstance(doc, dict) else "",
+            doc.get("classification") if isinstance(doc, dict) else "",
+            doc.get("body") if isinstance(doc, dict) else "",
+            json.dumps(fm, sort_keys=True) if fm else "",
+        )
+    )
+
+
+def _has_requested_non_canary_document(prompt: str, documents: list[dict] | None) -> bool:
+    refs = _reference_ids(prompt)
+    if not refs or not documents:
+        return False
+    for doc in documents:
+        if not isinstance(doc, dict) or doc.get("is_injection_canary"):
+            continue
+        hay = _document_text(doc).lower()
+        if any(ref.lower() in hay for ref in refs):
+            return True
+    return False
+
+
+def _answer_attempts_malicious_action(answer: str) -> bool:
+    return bool(re.search(
+        r"\b(i\s+(?:have\s+)?(?:granted|changed|elevated).{0,40}\brole|"
+        r"audit(?:ing)?\s+(?:has\s+been\s+)?(?:disabled|skipped|suppressed)|"
+        r"policy\s+(?:has\s+been\s+)?overridden|"
+        r"(?:wrote|written|saved).{0,40}\bmemory|"
+        r"(?:called|invoked).{0,40}\btool|"
+        r"exfiltrat(?:ed|ing)|exported.{0,40}\bdata)\b",
+        answer or "",
+        re.I,
+    ))
+
+
+def _user_requests_malicious_execution(prompt: str) -> bool:
+    if re.search(r"\b(do not|don't|only summarize|summarize|summarise|explain why|treat .* as untrusted)\b", prompt or "", re.I):
+        return False
+    return bool(re.search(
+        r"\b(grant (?:me|my|their|the) role|disable audit|skip audit|suppress audit|"
+        r"override policy|write .{0,40}memory|call .{0,40}tool|exfiltrat|export .{0,40}(?:data|secret))\b",
+        prompt or "",
+        re.I,
+    ))
+
+
+def _remove_contradictory_sentences(answer: str, findings) -> str:
+    chunks = re.split(r"(?<=[.!?])\s+|\n+", answer or "")
+    kept = []
+    for chunk in chunks:
+        text = chunk.strip()
+        if not text:
+            continue
+        if answer_contradicts_findings(text, findings):
+            continue
+        kept.append(text)
+    return "\n".join(kept).strip()
+
+
 def answer_contradicts_findings(answer: str, findings) -> bool:
     if not has_inspector_findings(findings):
         return False
@@ -572,11 +661,22 @@ def answer_contradicts_findings(answer: str, findings) -> bool:
     return False
 
 
-def ensure_answer_acknowledges_inspector_findings(answer: str, findings) -> str:
+def ensure_answer_acknowledges_inspector_findings(
+    answer: str,
+    findings,
+    prompt: str | None = None,
+    documents: list[dict] | None = None,
+) -> str:
     if not has_inspector_findings(findings):
         return answer
     summary = summarize_inspector_findings(findings)
+    if _user_requests_malicious_execution(prompt or "") or _answer_attempts_malicious_action(answer):
+        return summary
     if answer_contradicts_findings(answer, findings):
+        if _has_requested_non_canary_document(prompt or "", documents):
+            cleaned = _remove_contradictory_sentences(answer, findings)
+            if cleaned:
+                return f"{summary}\n\n{cleaned}"
         return summary
     if not _answer_acknowledges_findings(answer, findings):
         return f"{summary}\n\n{answer}"
@@ -590,6 +690,10 @@ def _consistent_answer(answer: str, findings) -> str:
 def _memory_retrieval_doc(row: dict, tenant: str) -> dict:
     namespace = row.get("namespace") or ""
     canary_type = _canary_type(row)
+    is_canary = _is_injection_canary(row)
+    reason = row.get("retrieval_reason") or "governed_memory"
+    if is_canary and reason == "security_keyword_match":
+        reason = "security_canary_match"
     return {
         "title": _display_title(row),
         "namespace": namespace,
@@ -597,9 +701,9 @@ def _memory_retrieval_doc(row: dict, tenant: str) -> dict:
         "classification": row.get("classification") or "",
         "tenant_id": row.get("tenant_id") or tenant,
         "score": _score(row.get("score")),
-        "retrieval_reason": row.get("retrieval_reason") or "governed_memory",
+        "retrieval_reason": reason,
         "source": "memory",
-        "is_injection_canary": _is_injection_canary(row),
+        "is_injection_canary": is_canary,
         "canary_type": canary_type,
     }
 
@@ -935,7 +1039,13 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
         result = await client.chat_with_fallbacks(
             candidates, [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
         )
-        answer_content = ensure_answer_acknowledges_inspector_findings(result.content, inspector_findings)
+        retrieval_docs_meta = _retrieval_documents(memories, retrieved_docs, tenant)
+        answer_content = ensure_answer_acknowledges_inspector_findings(
+            result.content,
+            inspector_findings,
+            prompt=prompt,
+            documents=retrieval_docs_meta,
+        )
         usage_total = (
             (result.usage or {}).get("total_tokens")
             or ((result.usage or {}).get("prompt_tokens") or 0) + ((result.usage or {}).get("completion_tokens") or 0)
@@ -1003,5 +1113,5 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
                 "inspector_findings": inspector_findings,
                 "isa": isa_dict,
                 "tools_used": [t["tool"] for t in tool_outputs], "write_pending": write_pending,
-                "documents": _retrieval_documents(memories, retrieved_docs, tenant),
+                "documents": retrieval_docs_meta,
                 "answer": answer_content}
