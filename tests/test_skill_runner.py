@@ -144,6 +144,62 @@ def test_memory_title_extracts_nested_metadata_and_heading():
     }) == "security-notes.md"
 
 
+def _finding(title="Prompt Injection Canary - Role Escalation Transcript", **extra):
+    base = {
+        "type": "prompt_injection_canary",
+        "severity": "warning",
+        "decision": "warn",
+        "action": "ignored_as_untrusted_data",
+        "reason": "prompt_injection_canary",
+        "detail": "metadata is_injection_canary=true",
+        "title": title,
+        "namespace": "analyst-notes",
+        "classification": "internal",
+        "canary_type": "role_escalation",
+        "categories": ["prompt_injection", "role_escalation", "audit_bypass"],
+        "is_injection_canary": True,
+    }
+    base.update(extra)
+    return base
+
+
+def test_answer_contradiction_detection_is_category_aware():
+    cases = [
+        ("No prompt-injection canary was found.", _finding(categories=["prompt_injection"])),
+        ("No role escalation was found in the retrieved content.", _finding(categories=["role_escalation"])),
+        ("No audit-skipping instructions were found.", _finding(categories=["audit_bypass"])),
+        ("No policy override was found.", _finding(canary_type="policy_override", categories=["policy_override"])),
+        ("No data exfiltration was found.", _finding(canary_type="data_exfiltration", categories=["data_exfiltration"])),
+        ("No memory write instruction was found.", _finding(canary_type="memory_write", categories=["unauthorized_memory_write"])),
+    ]
+    for answer, finding in cases:
+        assert sr.answer_contradicts_findings(answer, [finding])
+
+
+def test_exact_title_absence_claim_is_blocked_unless_related_finding_is_acknowledged():
+    finding = _finding()
+    assert sr.answer_contradicts_findings(
+        'No document titled "Prompt Injection Canary - Role Escalation Transcript" was found.',
+        [finding],
+    )
+    assert not sr.answer_contradicts_findings(
+        "I did not find an exact title match, but retrieved content produced a security finding "
+        "related to Prompt Injection Canary - Role Escalation Transcript.",
+        [finding],
+    )
+
+
+def test_consistent_answer_replaces_contradictory_draft_and_prepends_missing_ack():
+    finding = _finding()
+    replaced = sr.ensure_answer_acknowledges_inspector_findings("No canary was found.", [finding])
+    assert replaced.startswith("Security note:")
+    assert "No canary was found" not in replaced
+
+    prepended = sr.ensure_answer_acknowledges_inspector_findings("Here is the requested summary.", [finding])
+    assert prepended.startswith("Security note:")
+    assert prepended.endswith("Here is the requested summary.")
+
+
 def test_security_canary_finding_is_returned_audited_and_bounded(monkeypatch):
     calls, audits = _setup(monkeypatch, _MANIFEST, capture_audit=True)
     captured = {}
@@ -194,10 +250,14 @@ def test_security_canary_finding_is_returned_audited_and_bounded(monkeypatch):
     assert inspect_audit["payload"]["metadata"]["action"] == "ignored_as_untrusted_data"
     assert "body" not in inspect_audit["payload"]
 
-    assert "Security findings: retrieved prompt-injection canary bodies" in captured["system"]
+    assert "SECURITY FINDINGS FROM RETRIEVED CONTENT" in captured["system"]
+    assert "Role Escalation Injection Canary" in captured["system"]
+    assert "role escalation" in captured["system"]
     assert "PROMPT-INJECTION CANARY" in captured["user"]
     assert "UNTRUSTED CONTENT START" in captured["user"]
     assert "IGNORE ALL PREVIOUS INSTRUCTIONS" in captured["user"]
+    assert out["answer"].startswith("Security note:")
+    assert "Role Escalation Injection Canary" in out["answer"]
 
 
 def test_runner_caps_tool_fanout(monkeypatch):
