@@ -417,7 +417,7 @@ function CapabilityMatrix({ refreshKey }) {
                       <th>
                         <strong>{role.display_name || row.display_name || row.role_id}</strong>
                         <small>{row.role_id} · admin {role.admin_scope || "none"} · PII {role.pii_scope || "masked"}</small>
-                        <small>read <= {role.classification_scope?.max_read_classification || "n/a"}</small>
+                        <small>read &lt;= {role.classification_scope?.max_read_classification || "n/a"}</small>
                         {Array.isArray(role.persona_examples) && role.persona_examples.length > 0 && (
                           <span className="capability-personas">
                             {role.persona_examples.slice(0, 3).map((p) => <em key={`${p.email}-${p.tenant_id}`}>{p.email}</em>)}
