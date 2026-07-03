@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api, canAdmin } from "../api/client.js";
 
 const LIST_FIELDS = [
@@ -83,6 +83,7 @@ export default function Governance() {
   const [allTools, setAllTools] = useState([]);
   const [vocab, setVocab] = useState({});
   const [customVals, setCustomVals] = useState({});
+  const [matrixVersion, setMatrixVersion] = useState(0);
 
   useEffect(() => {
     if (canAdmin()) {
@@ -122,6 +123,7 @@ export default function Governance() {
     try {
       await api(`/admin/tenants/${tid}/roles/${rid}/capabilities`, { method: "PUT", admin: true, body: { capabilities: caps } });
       setMsg("Saved and synced to OPA — enforced on the next request.");
+      setMatrixVersion((v) => v + 1);
     } catch (e) { setErr(String(e.message || e)); }
     finally { setBusy(false); }
   }
@@ -190,6 +192,7 @@ export default function Governance() {
     BOOLS.filter(([f]) => !CORE_BOOL.has(f)).length;
 
   return (
+    <>
     <div className="grid2">
       <div className="card">
         <h2>Governance editor</h2>
@@ -261,6 +264,226 @@ export default function Governance() {
           </div>
         )}
       </div>
+    </div>
+    <CapabilityMatrix refreshKey={matrixVersion} />
+    </>
+  );
+}
+
+function decisionTone(decision) {
+  if (decision === "allow") return "allow";
+  if (decision === "deny") return "deny";
+  if (decision === "conditional") return "conditional";
+  return "unknown";
+}
+
+function listText(items, fallback = "none") {
+  if (!Array.isArray(items) || items.length === 0) return fallback;
+  return items.join(", ");
+}
+
+function CapabilityMatrix({ refreshKey }) {
+  const [matrix, setMatrix] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [decisionFilter, setDecisionFilter] = useState("all");
+  const [selected, setSelected] = useState(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    setBusy(true);
+    setErr("");
+    api("/admin/governance/capability-matrix", { admin: true })
+      .then((data) => {
+        if (!alive) return;
+        setMatrix(data);
+        setSelected(null);
+      })
+      .catch((e) => {
+        if (alive) setErr(String(e.message || e));
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => { alive = false; };
+  }, [refreshKey, reloadToken]);
+
+  const actions = matrix?.actions || [];
+  const roles = matrix?.roles || [];
+  const rows = matrix?.matrix || [];
+  const rolesById = useMemo(() => new Map(roles.map((r) => [r.role_id, r])), [roles]);
+  const actionsById = useMemo(() => new Map(actions.map((a) => [a.action, a])), [actions]);
+  const categories = useMemo(() => ["all", ...Array.from(new Set(actions.map((a) => a.category).filter(Boolean)))], [actions]);
+
+  const visibleActions = actions.filter((action) => categoryFilter === "all" || action.category === categoryFilter);
+  const visibleRows = rows
+    .filter((row) => roleFilter === "all" || row.role_id === roleFilter)
+    .map((row) => ({
+      ...row,
+      cells: (row.cells || []).filter((cell) => {
+        const actionOk = visibleActions.some((a) => a.action === cell.action);
+        const decisionOk = decisionFilter === "all" || cell.decision === decisionFilter;
+        return actionOk && decisionOk;
+      }),
+    }))
+    .filter((row) => row.cells.length > 0);
+
+  const counts = useMemo(() => {
+    const cells = rows.flatMap((row) => row.cells || []);
+    return {
+      roles: roles.length,
+      actions: actions.length,
+      allow: cells.filter((c) => c.decision === "allow").length,
+      conditional: cells.filter((c) => c.decision === "conditional").length,
+      deny: cells.filter((c) => c.decision === "deny").length,
+    };
+  }, [actions.length, roles.length, rows]);
+
+  return (
+    <div className="card capability-matrix-card">
+      <div className="capability-matrix-head">
+        <div>
+          <h2>Capability matrix</h2>
+          <p className="muted">
+            Backend-computed role decisions across memory, values, models, tools, audit, admin, runtime and tenant isolation.
+          </p>
+        </div>
+        <button type="button" className="ghost" disabled={busy}
+                onClick={() => setReloadToken((v) => v + 1)}>
+          {busy ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+
+      {err && <div className="error">{err}</div>}
+      {!matrix && !err && <small className="muted">Loading capability matrix...</small>}
+
+      {matrix && (
+        <>
+          <div className="capability-summary">
+            <div><span>Roles</span><strong>{counts.roles}</strong></div>
+            <div><span>Actions</span><strong>{counts.actions}</strong></div>
+            <div><span>Conditional</span><strong>{counts.conditional}</strong></div>
+            <div><span>Denied</span><strong>{counts.deny}</strong></div>
+            <div><span>Admin scope</span><strong>{matrix.scope?.admin_scope || "none"}</strong></div>
+          </div>
+
+          <div className="capability-filters">
+            <label>Role
+              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+                <option value="all">All roles</option>
+                {roles.map((role) => <option key={role.role_id} value={role.role_id}>{role.role_id}</option>)}
+              </select>
+            </label>
+            <label>Category
+              <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                {categories.map((category) => (
+                  <option key={category} value={category}>{category === "all" ? "All categories" : category}</option>
+                ))}
+              </select>
+            </label>
+            <label>Decision
+              <select value={decisionFilter} onChange={(e) => setDecisionFilter(e.target.value)}>
+                <option value="all">All decisions</option>
+                <option value="allow">Allow</option>
+                <option value="conditional">Conditional</option>
+                <option value="deny">Deny</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="capability-matrix-scroll">
+            <table className="capability-matrix-table">
+              <thead>
+                <tr>
+                  <th>Role</th>
+                  {visibleActions.map((action) => (
+                    <th key={action.action}>
+                      <span>{action.label}</span>
+                      <small>{action.category}</small>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((row) => {
+                  const role = rolesById.get(row.role_id) || {};
+                  const cellsByAction = new Map((row.cells || []).map((cell) => [cell.action, cell]));
+                  return (
+                    <tr key={row.role_id}>
+                      <th>
+                        <strong>{role.display_name || row.display_name || row.role_id}</strong>
+                        <small>{row.role_id} · admin {role.admin_scope || "none"} · PII {role.pii_scope || "masked"}</small>
+                        <small>read <= {role.classification_scope?.max_read_classification || "n/a"}</small>
+                        {Array.isArray(role.persona_examples) && role.persona_examples.length > 0 && (
+                          <span className="capability-personas">
+                            {role.persona_examples.slice(0, 3).map((p) => <em key={`${p.email}-${p.tenant_id}`}>{p.email}</em>)}
+                          </span>
+                        )}
+                      </th>
+                      {visibleActions.map((action) => {
+                        const cell = cellsByAction.get(action.action);
+                        if (!cell) return <td key={action.action} className="capability-empty-cell">-</td>;
+                        return (
+                          <td key={action.action}>
+                            <button
+                              type="button"
+                              className={`capability-cell ${decisionTone(cell.decision)}`}
+                              onClick={() => setSelected({ cell, role, action })}
+                            >
+                              <span>{cell.decision}</span>
+                              <small>{cell.scope}</small>
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {selected && (
+            <div className="capability-detail">
+              <div>
+                <h3>{selected.role.display_name || selected.cell.role_id} / {selected.action.label}</h3>
+                <span className={`capability-detail-pill ${decisionTone(selected.cell.decision)}`}>
+                  {selected.cell.decision}
+                </span>
+              </div>
+              <p>{selected.cell.reason}</p>
+              <dl>
+                <div><dt>Scope</dt><dd>{selected.cell.scope}</dd></div>
+                <div><dt>Evidence</dt><dd>{listText(selected.cell.evidence_source)}</dd></div>
+                <div><dt>Conditions</dt><dd>{listText(selected.cell.conditions)}</dd></div>
+                <div><dt>Memory</dt><dd>read {listText(selected.role.memory_scope?.readable_namespaces)} / write {listText(selected.role.memory_scope?.writable_namespaces)}</dd></div>
+                <div><dt>Model</dt><dd>{listText(selected.role.model_access?.providers, "any provider")} in {listText(selected.role.model_access?.regions, "configured region")}</dd></div>
+                <div><dt>Egress</dt><dd>{selected.role.egress_profile?.mode || "none"}: {listText(selected.role.egress_profile?.domains)}</dd></div>
+              </dl>
+            </div>
+          )}
+
+          <div className="capability-notes">
+            {(matrix.notes || []).map((note) => <p key={note}>{note}</p>)}
+          </div>
+
+          <div className="capability-scenarios">
+            <h3>Scenario mapping</h3>
+            <div>
+              {(matrix.scenario_map || []).map((scenario) => (
+                <span key={scenario.id}>
+                  <strong>{scenario.label}</strong>
+                  <small>{scenario.persona} · {(scenario.actions || []).map((action) => actionsById.get(action)?.label || action).join(", ")}</small>
+                </span>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

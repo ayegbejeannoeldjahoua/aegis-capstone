@@ -43,11 +43,11 @@ const HOME_CARDS = [
     cta: "View FinOps",
   },
   {
-    title: "Policy",
-    meta: "capability matrix",
+    title: "Governance & Policy",
+    meta: "capabilities and policy matrix",
     icon: Gavel,
-    action: (go) => go("console", "policy"),
-    cta: "Explore policy",
+    action: (go) => go("console", "governance"),
+    cta: "Open governance",
   },
   {
     title: "Audit",

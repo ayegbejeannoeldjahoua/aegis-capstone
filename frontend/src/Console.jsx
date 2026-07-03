@@ -12,7 +12,6 @@ import {
   Play,
   Server,
   Settings,
-  Shield,
   User,
   Users as UsersIcon,
 } from "lucide-react";
@@ -29,17 +28,15 @@ import Audit from "./pages/Audit.jsx";
 import Models from "./pages/Models.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import FinOps from "./pages/FinOps.jsx";
-import PolicyExplorer from "./pages/PolicyExplorer.jsx";
 import Runs from "./pages/Runs.jsx";
 
 const TAB_META = {
   dashboard: { icon: LayoutDashboard, section: "Console / Dashboard" },
   runs: { icon: Play, section: "Console / Runs" },
   finops: { icon: DollarSign, section: "Console / FinOps" },
-  policy: { icon: Shield, section: "Console / Policy" },
   tenants: { icon: Building2, section: "Console / Tenants" },
   users: { icon: UsersIcon, section: "Console / Users" },
-  governance: { icon: Gavel, section: "Console / Governance" },
+  governance: { icon: Gavel, section: "Console / Governance & Policy" },
   audit: { icon: FileText, section: "Console / Audit" },
   values: { icon: Heart, section: "Console / Values" },
   account: { icon: User, section: "Console / Account" },
@@ -49,7 +46,7 @@ const TAB_META = {
 
 export default function Console({ onHome, initialTab }) {
   const [profile, setProfile] = useState(getProfile());
-  const [tab, setTab] = useState(initialTab || "values");
+  const [tab, setTab] = useState(initialTab === "policy" ? "governance" : (initialTab || "values"));
   const [adminTok, setTok] = useState(getAdminToken());
   const claims = keycloak.tokenParsed || {};
 
@@ -69,10 +66,9 @@ export default function Console({ onHome, initialTab }) {
     ["dashboard", "Dashboard"],
     ["runs", "Runs"],
     ["finops", "FinOps"],
-    ["policy", "Policy"],
     ["tenants", "Tenants"],
     ["users", "Users"],
-    ["governance", "Governance"],
+    ["governance", "Governance & Policy"],
     ["audit", "Audit"],
   );
   if (platformAdmin) tabs.push(["models", "Models"], ["mcp", "MCP"]);
@@ -126,7 +122,6 @@ export default function Console({ onHome, initialTab }) {
           {activeTab === "dashboard" && admin && <Dashboard />}
           {activeTab === "runs" && admin && <Runs />}
           {activeTab === "finops" && admin && <FinOps />}
-          {activeTab === "policy" && admin && <PolicyExplorer />}
           {activeTab === "tenants" && admin && <Tenants />}
           {activeTab === "users" && admin && <Users />}
           {activeTab === "governance" && admin && <Governance />}

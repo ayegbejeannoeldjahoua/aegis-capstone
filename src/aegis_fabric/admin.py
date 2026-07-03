@@ -7,6 +7,7 @@ Every governance mutation is written to the audit ledger.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import uuid
 
@@ -773,6 +774,656 @@ def _effective_values(tenant_id: str, team: str, role: str, user: str) -> dict:
             "resolved": d, "values_overlay": d.get("values_overlay", [])}
 
 
+_CAPABILITY_MATRIX_ACTIONS = [
+    {
+        "action": "memory.read",
+        "category": "Memory",
+        "label": "Read memory",
+        "description": "Tenant-scoped retrieval from governed document memory.",
+    },
+    {
+        "action": "memory.write",
+        "category": "Memory",
+        "label": "Write memory",
+        "description": "Create or update tenant memory within classification and approval limits.",
+    },
+    {
+        "action": "values.read",
+        "category": "Values",
+        "label": "Read values",
+        "description": "Read role plus org/team/individual values that narrow capabilities.",
+    },
+    {
+        "action": "values.write.own",
+        "category": "Values",
+        "label": "Edit own values",
+        "description": "Set individual preferences that can only tighten effective behavior.",
+    },
+    {
+        "action": "values.write.role",
+        "category": "Values",
+        "label": "Edit role values",
+        "description": "Manage role-level values overlays for a governed tenant.",
+    },
+    {
+        "action": "values.write.team",
+        "category": "Values",
+        "label": "Edit team values",
+        "description": "Manage team-level values overlays for a governed tenant.",
+    },
+    {
+        "action": "values.write.department",
+        "category": "Values",
+        "label": "Edit department values",
+        "description": "Manage department-scoped values where the deployment has that scope.",
+    },
+    {
+        "action": "values.write.organization",
+        "category": "Values",
+        "label": "Edit org values",
+        "description": "Manage organization-wide invariants and values overlays.",
+    },
+    {
+        "action": "model.call",
+        "category": "Model",
+        "label": "Call model",
+        "description": "Invoke an allowed provider/model under region, purpose, and budget controls.",
+    },
+    {
+        "action": "model.route",
+        "category": "Model",
+        "label": "Route model",
+        "description": "Select an approved provider/model route for the request context.",
+    },
+    {
+        "action": "tool.call",
+        "category": "Tools",
+        "label": "Call tool",
+        "description": "Invoke an allowed tool with per-request and downstream governance checks.",
+    },
+    {
+        "action": "egress.http",
+        "category": "Egress",
+        "label": "HTTP egress",
+        "description": "Send data outside the tenant boundary to approved destinations only.",
+    },
+    {
+        "action": "audit.read.own",
+        "category": "Audit",
+        "label": "Own audit",
+        "description": "Read audit events for the user's own activity.",
+    },
+    {
+        "action": "audit.read.tenant",
+        "category": "Audit",
+        "label": "Tenant audit",
+        "description": "Read tenant-scoped audit and trace evidence.",
+    },
+    {
+        "action": "audit.read.platform",
+        "category": "Audit",
+        "label": "Platform audit",
+        "description": "Read platform-wide audit and trace evidence.",
+    },
+    {
+        "action": "finops.read",
+        "category": "FinOps",
+        "label": "Read FinOps",
+        "description": "View spend, usage, and budget telemetry for the admin scope.",
+    },
+    {
+        "action": "policy.read",
+        "category": "Policy",
+        "label": "Read policy",
+        "description": "Inspect role templates, values, and governance state.",
+    },
+    {
+        "action": "policy.write",
+        "category": "Policy",
+        "label": "Write policy",
+        "description": "Edit governance templates, values, and platform policy settings.",
+    },
+    {
+        "action": "user.admin",
+        "category": "Admin",
+        "label": "User admin",
+        "description": "Manage user assignments inside the authorized admin scope.",
+    },
+    {
+        "action": "tenant.admin",
+        "category": "Admin",
+        "label": "Tenant admin",
+        "description": "Manage tenant configuration or platform tenant lifecycle.",
+    },
+    {
+        "action": "approval.review",
+        "category": "Admin",
+        "label": "Review approvals",
+        "description": "Approve or reject pending dual-control actions.",
+    },
+    {
+        "action": "runtime.invoke",
+        "category": "Runtime",
+        "label": "Invoke runtime",
+        "description": "Use a governed runtime sandbox when the role allows execution.",
+    },
+    {
+        "action": "runtime.python",
+        "category": "Runtime",
+        "label": "Python runtime",
+        "description": "Run Python inside the runtime sandbox with duration, memory, and network controls.",
+    },
+    {
+        "action": "cross_tenant.read",
+        "category": "Tenant Boundary",
+        "label": "Cross-tenant read",
+        "description": "Read data from another tenant. Default is deny.",
+    },
+]
+
+_CAPABILITY_MATRIX_PERSONAS = [
+    {
+        "email": "jane@acmecp.example",
+        "tenant_id": "acmecp",
+        "team_id": "research",
+        "role_id": "analyst",
+        "label": "Jane, Acme analyst",
+    },
+    {
+        "email": "kim@acmecp.example",
+        "tenant_id": "acmecp",
+        "team_id": "research",
+        "role_id": "lead",
+        "label": "Kim, Acme lead",
+    },
+    {
+        "email": "pat@acmecp.example",
+        "tenant_id": "acmecp",
+        "team_id": "research",
+        "role_id": "tenant-admin",
+        "label": "Pat, Acme tenant admin",
+    },
+    {
+        "email": "priya@it.example",
+        "tenant_id": "it",
+        "team_id": "platform",
+        "role_id": "platform-admin",
+        "label": "Priya, platform admin",
+    },
+    {
+        "email": "jane@finsvc.example",
+        "tenant_id": "finsvc",
+        "team_id": "research",
+        "role_id": "analyst",
+        "label": "Jane, FinSvc analyst",
+    },
+]
+
+_CAPABILITY_MATRIX_SCENARIOS = [
+    {
+        "id": "s6_masked_transcript",
+        "label": "S6 Jane transcript",
+        "persona": "jane@acmecp.example",
+        "actions": ["memory.read", "model.call"],
+        "expected": "allowed tenant read with masked PII.",
+    },
+    {
+        "id": "s7_full_pii_transcript",
+        "label": "S7 Kim transcript",
+        "persona": "kim@acmecp.example",
+        "actions": ["memory.read", "model.call"],
+        "expected": "allowed tenant read with full PII scope.",
+    },
+    {
+        "id": "s10_values_write",
+        "label": "S10 values governance",
+        "persona": "pat@acmecp.example",
+        "actions": ["values.write.team", "values.write.role", "policy.write"],
+        "expected": "tenant-scoped governance edits only.",
+    },
+    {
+        "id": "s16_prompt_injection",
+        "label": "S16 prompt-injection inspection",
+        "persona": "jane@acmecp.example",
+        "actions": ["memory.read", "audit.read.own"],
+        "expected": "canary evidence is treated as untrusted content.",
+    },
+]
+
+
+def _row_dict(row) -> dict:
+    return dict(row) if row is not None else {}
+
+
+def _jsonish(raw) -> dict:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _caps_from(raw) -> dict:
+    return rbac.normalize_caps(_jsonish(raw))
+
+
+def _listish(raw) -> list:
+    return raw if isinstance(raw, list) else []
+
+
+def _textish(raw, fallback: str = "none") -> str:
+    return str(raw) if raw not in (None, "") else fallback
+
+
+def _decision(role_id: str, caps: dict, action: str) -> dict:
+    admin_scope = _textish(caps.get("admin_scope"), "none")
+    audit_scope = _textish(caps.get("audit_scope"), "none")
+    egress = _listish(caps.get("egress_domains"))
+    allowed_langs = _listish(caps.get("allowed_runtime_languages"))
+
+    def out(decision: str, scope: str, reason: str, conditions: list[str] | None = None,
+            evidence: list[str] | None = None) -> dict:
+        return {
+            "role_id": role_id,
+            "action": action,
+            "decision": decision,
+            "scope": scope,
+            "reason": reason,
+            "conditions": conditions or [],
+            "evidence_source": evidence or ["role_capabilities", "policy.pdp"],
+            "scenario_ids": [s["id"] for s in _CAPABILITY_MATRIX_SCENARIOS if action in s["actions"]],
+        }
+
+    if action == "memory.read":
+        return out(
+            "conditional",
+            "own_tenant",
+            "Memory retrieval is tenant-scoped and capped by role classification limits.",
+            [
+                "resource.tenant_id must equal subject.tenant_id",
+                f"classification must be <= {caps.get('max_read_classification')}",
+                "retrieval SQL is tenant-filtered",
+            ],
+            ["policy.memory.read", "rbac.role_capabilities", "memory.sql_tenant_filter"],
+        )
+    if action == "memory.write":
+        return out(
+            "conditional",
+            "own_tenant",
+            "Writes are tenant-scoped and capped by writable classification and approval rules.",
+            [
+                f"classification must be <= {caps.get('max_write_classification')}",
+                f"approval required above {caps.get('write_requires_approval_above')}",
+                "namespace must be writable for the tenant role",
+            ],
+            ["policy.memory.write", "rbac.role_capabilities", "approvals"],
+        )
+    if action == "values.read":
+        return out(
+            "allow",
+            "applicable_scope",
+            "Resolved values are readable for the subject context so effective governance is explainable.",
+            ["org/team/role/individual values are resolved from broadest to narrowest"],
+            ["values.resolve_values", "rbac.role_capabilities"],
+        )
+    if action == "values.write.own":
+        return out(
+            "conditional",
+            "own_identity",
+            "Individual values can tighten the user's own effective behavior.",
+            ["scope_type must be individual", "scope_id must match the subject email"],
+            ["values_docs._can_write", "values.apply_value_overlays"],
+        )
+    if action in {"values.write.role", "values.write.team", "values.write.department"}:
+        if caps.get("can_edit_governance") and admin_scope in {"tenant", "platform"}:
+            scope = "all_tenants" if admin_scope == "platform" else "own_tenant"
+            return out(
+                "conditional",
+                scope,
+                "Governance editors can write scoped values without widening role capabilities.",
+                ["scope tenant must be within the admin boundary", "values overlays can only tighten effective caps"],
+                ["admin.can_edit_governance", "values.apply_value_overlays"],
+            )
+        return out(
+            "deny",
+            "none",
+            "Role does not have governance edit capability.",
+            ["requires can_edit_governance and tenant or platform admin scope"],
+            ["admin.can_edit_governance"],
+        )
+    if action == "values.write.organization":
+        if caps.get("can_edit_governance") and admin_scope == "platform":
+            return out(
+                "conditional",
+                "organization",
+                "Only platform governance editors can change organization-wide values.",
+                ["organization values affect every tenant boundary and require platform admin scope"],
+                ["values_docs._can_write", "admin.scope"],
+            )
+        return out(
+            "deny",
+            "none",
+            "Organization-wide values require platform admin scope.",
+            ["requires can_edit_governance and admin_scope=platform"],
+            ["values_docs._can_write"],
+        )
+    if action == "model.call":
+        return out(
+            "conditional",
+            "request",
+            "Model calls must match approved provider, model, region, purpose, and budget limits.",
+            [
+                f"regions={_listish(caps.get('allowed_model_regions'))}",
+                f"providers={_listish(caps.get('allowed_providers'))}",
+                f"max_output_tokens={caps.get('max_output_tokens')}",
+                f"token_budget_per_day={caps.get('token_budget_per_day')}",
+            ],
+            ["model_registry", "values.resolve_values", "finops"],
+        )
+    if action == "model.route":
+        return out(
+            "conditional",
+            "request",
+            "Routing is constrained by residency, provider/model allowlists, and fallback policy.",
+            [
+                f"require_local_above_classification={caps.get('require_local_above_classification')}",
+                f"fallback_mode={caps.get('fallback_mode')}",
+                f"residency_strict={caps.get('residency_strict')}",
+            ],
+            ["routing.policy", "rbac.role_capabilities"],
+        )
+    if action == "tool.call":
+        return out(
+            "conditional",
+            "request",
+            "Tool invocations are allowed only after tool, egress, PII, and per-request limits pass.",
+            [
+                "tool_id must be present and allowed for the role",
+                f"max_tool_calls_per_request={caps.get('max_tool_calls_per_request')}",
+                "downstream side effects are evaluated by their own PDP actions",
+            ],
+            ["policy.tool.call", "tools.catalog", "egress.policy"],
+        )
+    if action == "egress.http":
+        if "*" in egress:
+            return out(
+                "conditional",
+                "allowlist",
+                "HTTP egress is permitted to approved destinations after PII and purpose checks.",
+                ["wildcard egress is platform-admin only in the default templates"],
+                ["rbac.egress_domains", "egress.policy"],
+            )
+        if egress:
+            return out(
+                "conditional",
+                "allowlist",
+                "HTTP egress is limited to explicit approved domains.",
+                [f"allowed domains={egress}", "PII and data-classification checks still apply"],
+                ["rbac.egress_domains", "egress.policy"],
+            )
+        return out(
+            "deny",
+            "none",
+            "Role has no approved egress destinations.",
+            ["egress_domains is empty"],
+            ["rbac.egress_domains"],
+        )
+    if action == "audit.read.own":
+        if audit_scope in {"own", "team", "tenant", "all"}:
+            return out("allow", "own", "Role can inspect its own audit evidence.", [], ["audit_scope"])
+        return out("deny", "none", "Role has no audit read scope.", ["requires audit_scope"], ["audit_scope"])
+    if action == "audit.read.tenant":
+        if audit_scope in {"tenant", "all"} or admin_scope in {"tenant", "platform"}:
+            scope = "all_tenants" if audit_scope == "all" or admin_scope == "platform" else "own_tenant"
+            return out("conditional", scope, "Tenant audit reads are scoped to the admin boundary.", ["tenant filter is enforced"], ["audit_scope", "admin.scope"])
+        return out("deny", "none", "Role cannot read tenant audit evidence.", ["requires tenant/all audit scope"], ["audit_scope"])
+    if action == "audit.read.platform":
+        if audit_scope == "all" or admin_scope == "platform":
+            return out("allow", "all_tenants", "Platform audit reads require platform scope.", [], ["audit_scope", "admin.scope"])
+        return out("deny", "none", "Platform audit reads require platform-admin scope.", ["requires audit_scope=all"], ["audit_scope"])
+    if action == "finops.read":
+        if admin_scope in {"tenant", "platform"}:
+            scope = "all_tenants" if admin_scope == "platform" else "own_tenant"
+            return out("conditional", scope, "FinOps telemetry follows the admin boundary.", ["tenant admins are tenant-filtered"], ["dashboard_api.finops", "admin.scope"])
+        return out("deny", "none", "FinOps telemetry requires admin scope.", ["requires tenant or platform admin scope"], ["admin.scope"])
+    if action == "policy.read":
+        if admin_scope in {"tenant", "platform"}:
+            scope = "all_tenants" if admin_scope == "platform" else "own_tenant"
+            return out("allow", scope, "Governance state is readable inside the admin boundary.", [], ["admin.scope"])
+        return out("deny", "none", "Policy inspection requires admin scope.", ["requires tenant or platform admin scope"], ["admin.scope"])
+    if action == "policy.write":
+        if caps.get("can_edit_governance") and admin_scope in {"tenant", "platform"}:
+            scope = "all_tenants" if admin_scope == "platform" else "own_tenant"
+            return out("conditional", scope, "Governance writes are allowed inside the admin boundary.", ["dual-control may apply to sensitive changes"], ["can_edit_governance", "approvals"])
+        return out("deny", "none", "Governance writes require can_edit_governance.", ["requires can_edit_governance"], ["can_edit_governance"])
+    if action == "user.admin":
+        if caps.get("can_manage_users") and admin_scope in {"tenant", "platform"}:
+            scope = "all_tenants" if admin_scope == "platform" else "own_tenant"
+            return out("conditional", scope, "User administration is scoped by tenant/platform admin boundary.", ["tenant admins cannot administer other tenants"], ["can_manage_users", "admin.scope"])
+        return out("deny", "none", "Role cannot administer users.", ["requires can_manage_users"], ["can_manage_users"])
+    if action == "tenant.admin":
+        if admin_scope == "platform":
+            return out("allow", "all_tenants", "Platform admins can manage tenant lifecycle.", [], ["admin.scope", "can_delete_tenant"])
+        if admin_scope == "tenant":
+            return out("conditional", "own_tenant", "Tenant admins can manage configuration inside their own tenant only.", ["cannot create/delete other tenants"], ["admin.scope"])
+        return out("deny", "none", "Role has no tenant administration scope.", ["requires tenant/platform admin scope"], ["admin.scope"])
+    if action == "approval.review":
+        can_approve = _textish(caps.get("can_approve"), "none")
+        if can_approve != "none":
+            return out("conditional", can_approve, "Role can review pending actions in its approval scope.", ["second-approver and dual-control rules still apply"], ["approvals", "can_approve"])
+        return out("deny", "none", "Role cannot approve pending actions.", ["requires can_approve"], ["can_approve"])
+    if action == "runtime.invoke":
+        if caps.get("runtime_exec"):
+            return out("conditional", "sandbox", "Runtime execution is allowed inside sandbox limits.", [f"network={caps.get('runtime_network')}", f"max_seconds={caps.get('runtime_max_seconds')}", f"memory_mb={caps.get('runtime_memory_mb')}"], ["policy.runtime.exec", "runtime.sandbox"])
+        return out("deny", "none", "Runtime execution is disabled for this role.", ["runtime_exec=false"], ["runtime_exec"])
+    if action == "runtime.python":
+        if caps.get("runtime_exec") and "python" in allowed_langs:
+            return out("conditional", "sandbox", "Python is allowed only in the governed runtime sandbox.", [f"allowed_runtime_languages={allowed_langs}", f"network={caps.get('runtime_network')}"], ["runtime.sandbox", "allowed_runtime_languages"])
+        return out("deny", "none", "Python runtime requires runtime_exec and language allowlist.", ["requires python in allowed_runtime_languages"], ["allowed_runtime_languages"])
+    if action == "cross_tenant.read":
+        return out(
+            "deny",
+            "none",
+            "Cross-tenant data reads are denied by default for every role.",
+            ["resource.tenant_id must equal subject.tenant_id", "platform admin does not bypass ordinary tenant data isolation"],
+            ["policy._valid_tenant", "memory.sql_tenant_filter"],
+        )
+    return out("unknown", "none", "No matrix rule is defined for this action.", [], ["capability_matrix"])
+
+
+def _template_rows_with_defaults(template_rows: list[dict]) -> list[dict]:
+    seen = {r.get("template_id") for r in template_rows}
+    out = list(template_rows)
+    for tid, spec in rbac.DEFAULT_TEMPLATES.items():
+        if tid not in seen:
+            out.append({
+                "template_id": tid,
+                "display_name": spec.get("display_name", tid),
+                "capabilities": rbac.normalize_caps(spec.get("capabilities")),
+            })
+    return out
+
+
+def _build_capability_matrix(principal: AdminPrincipal, template_rows: list[dict],
+                             role_rows: list[dict], assignment_rows: list[dict]) -> dict:
+    templates = _template_rows_with_defaults([_row_dict(r) for r in template_rows])
+    template_map: dict[str, dict] = {}
+    for row in templates:
+        tid = row.get("template_id")
+        if not tid:
+            continue
+        template_map[tid] = {
+            "template_id": tid,
+            "display_name": row.get("display_name") or tid.replace("-", " ").title(),
+            "capabilities": _caps_from(row.get("capabilities")),
+        }
+
+    roles: dict[str, dict] = {}
+    for tid, row in template_map.items():
+        roles[tid] = {
+            "role_id": tid,
+            "template_id": tid,
+            "display_name": row["display_name"],
+            "capabilities": row["capabilities"],
+            "tenant_ids": set(),
+            "team_ids": set(),
+            "source": "role_template",
+        }
+
+    for raw in role_rows:
+        row = _row_dict(raw)
+        role_id = row.get("role_id") or row.get("name")
+        if not role_id:
+            continue
+        template_id = row.get("template_id") or role_id
+        template = template_map.get(template_id) or template_map.get(role_id) or {}
+        caps = _caps_from(row.get("capabilities") or template.get("capabilities"))
+        item = roles.setdefault(role_id, {
+            "role_id": role_id,
+            "template_id": template_id,
+            "display_name": template.get("display_name") or role_id.replace("-", " ").title(),
+            "capabilities": caps,
+            "tenant_ids": set(),
+            "team_ids": set(),
+            "source": "db_role",
+        })
+        item["capabilities"] = caps
+        item["template_id"] = template_id
+        item["source"] = "db_role"
+        if row.get("tenant_id"):
+            item["tenant_ids"].add(row["tenant_id"])
+        if row.get("team_id"):
+            item["team_ids"].add(row["team_id"])
+
+    by_role_personas: dict[str, list[dict]] = {r: [] for r in roles}
+    for persona in _CAPABILITY_MATRIX_PERSONAS:
+        if persona["role_id"] in by_role_personas:
+            by_role_personas[persona["role_id"]].append(persona)
+    for raw in assignment_rows:
+        row = _row_dict(raw)
+        role_id = row.get("role_id")
+        if not role_id or role_id not in roles:
+            continue
+        persona = {
+            "email": row.get("user_email") or row.get("email"),
+            "tenant_id": row.get("tenant_id"),
+            "team_id": row.get("team_id"),
+            "role_id": role_id,
+            "label": row.get("user_email") or row.get("email") or role_id,
+        }
+        if persona["email"] and persona not in by_role_personas.setdefault(role_id, []):
+            by_role_personas[role_id].append(persona)
+
+    role_cards = []
+    matrix = []
+    for role_id in sorted(roles, key=lambda r: (r not in ["analyst", "lead", "tenant-admin", "platform-admin"], r)):
+        item = roles[role_id]
+        caps = item["capabilities"]
+        tenant_ids = sorted(item["tenant_ids"])
+        team_ids = sorted(item["team_ids"])
+        admin_scope = _textish(caps.get("admin_scope"), "none")
+        role_cards.append({
+            "role_id": role_id,
+            "template_id": item.get("template_id"),
+            "display_name": item.get("display_name"),
+            "description": item.get("display_name"),
+            "source": item.get("source"),
+            "tenant_ids": tenant_ids,
+            "team_ids": team_ids,
+            "tenant_scope": "all_tenants" if admin_scope == "platform" else ("own_tenant" if tenant_ids or admin_scope == "tenant" else "template"),
+            "admin_scope": admin_scope,
+            "audit_scope": _textish(caps.get("audit_scope"), "none"),
+            "classification_scope": {
+                "max_read_classification": caps.get("max_read_classification"),
+                "max_write_classification": caps.get("max_write_classification"),
+                "readable_classifications": rbac.classes_up_to(caps.get("max_read_classification")),
+                "writable_classifications": rbac.classes_up_to(caps.get("max_write_classification")),
+            },
+            "pii_scope": _textish(caps.get("pii_scope"), "masked"),
+            "memory_scope": {
+                "readable_namespaces": _listish(caps.get("readable_namespaces")),
+                "writable_namespaces": _listish(caps.get("writable_namespaces")),
+            },
+            "model_access": {
+                "regions": _listish(caps.get("allowed_model_regions")),
+                "providers": _listish(caps.get("allowed_providers")),
+                "model_ids": _listish(caps.get("allowed_model_ids")),
+                "purposes": _listish(caps.get("allowed_model_purposes")),
+                "max_output_tokens": caps.get("max_output_tokens"),
+                "fallback_mode": caps.get("fallback_mode"),
+            },
+            "budget_profile": {
+                "rate_limit_per_minute": caps.get("rate_limit_per_minute"),
+                "daily_request_quota": caps.get("daily_request_quota"),
+                "token_budget_per_day": caps.get("token_budget_per_day"),
+                "max_concurrent_requests": caps.get("max_concurrent_requests"),
+            },
+            "runtime_scope": {
+                "runtime_exec": bool(caps.get("runtime_exec")),
+                "allowed_runtime_languages": _listish(caps.get("allowed_runtime_languages")),
+                "network": caps.get("runtime_network"),
+                "max_seconds": caps.get("runtime_max_seconds"),
+                "memory_mb": caps.get("runtime_memory_mb"),
+            },
+            "egress_profile": {
+                "domains": _listish(caps.get("egress_domains")),
+                "mode": "wildcard" if "*" in _listish(caps.get("egress_domains")) else ("allowlist" if caps.get("egress_domains") else "none"),
+            },
+            "cross_tenant_access": "denied_by_default",
+            "persona_examples": by_role_personas.get(role_id, []),
+        })
+        matrix.append({
+            "role_id": role_id,
+            "display_name": item.get("display_name"),
+            "cells": [_decision(role_id, caps, a["action"]) for a in _CAPABILITY_MATRIX_ACTIONS],
+        })
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "scope": {"admin_scope": principal.scope, "tenant_id": principal.tenant_id},
+        "roles": role_cards,
+        "actions": _CAPABILITY_MATRIX_ACTIONS,
+        "matrix": matrix,
+        "persona_examples": _CAPABILITY_MATRIX_PERSONAS,
+        "scenario_map": _CAPABILITY_MATRIX_SCENARIOS,
+        "notes": [
+            "Skill invocation is intentionally open at skill.invoke, but each downstream memory/tool/model/runtime action is still evaluated by the PDP.",
+            "Cross-tenant data reads default to deny for every role; admin scope controls governance visibility, not ordinary tenant-data bypass.",
+            "Values overlays can tighten effective capabilities and do not grant more access than the underlying role template.",
+        ],
+    }
+
+
+def _capability_matrix(principal: AdminPrincipal) -> dict:
+    tenant_filter = principal.tenant_id if principal.scope == "tenant" else None
+    with get_conn() as conn:
+        template_rows = [dict(r) for r in conn.execute(
+            "SELECT template_id, display_name, capabilities FROM role_templates ORDER BY template_id"
+        ).fetchall()]
+        if tenant_filter:
+            role_rows = [dict(r) for r in conn.execute(
+                "SELECT tenant_id, role_id, team_id, template_id, capabilities "
+                "FROM roles WHERE tenant_id=%s ORDER BY tenant_id, role_id",
+                (tenant_filter,),
+            ).fetchall()]
+            assignment_rows = [dict(r) for r in conn.execute(
+                "SELECT user_email, tenant_id, team_id, role_id "
+                "FROM user_assignments WHERE tenant_id=%s ORDER BY tenant_id, user_email",
+                (tenant_filter,),
+            ).fetchall()]
+        else:
+            role_rows = [dict(r) for r in conn.execute(
+                "SELECT tenant_id, role_id, team_id, template_id, capabilities "
+                "FROM roles ORDER BY tenant_id, role_id"
+            ).fetchall()]
+            assignment_rows = [dict(r) for r in conn.execute(
+                "SELECT user_email, tenant_id, team_id, role_id "
+                "FROM user_assignments ORDER BY tenant_id, user_email"
+            ).fetchall()]
+    return _build_capability_matrix(principal, template_rows, role_rows, assignment_rows)
+
+
 def _seed_demo_values(tenant_id: str, actor: str) -> dict:
     """Generate illustrative org + per-team values for a tenant to exercise the cascade. Does NOT
     touch roles/capabilities, so it is safe to run on a live tenant without resetting role caps."""
@@ -973,6 +1624,11 @@ async def get_effective_values(tenant_id: str, team: str, role: str, user: str =
                                principal: AdminPrincipal = Depends(admin_principal)):
     scope_tenant(principal, tenant_id)
     return await run_db(_effective_values, tenant_id, team, role, user)
+
+
+@router.get("/governance/capability-matrix")
+async def governance_capability_matrix(principal: AdminPrincipal = Depends(admin_principal)):
+    return await run_db(_capability_matrix, principal)
 
 
 @router.post("/tenants/{tenant_id}/values/seed-demo")

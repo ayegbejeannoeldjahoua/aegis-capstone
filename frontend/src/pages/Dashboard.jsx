@@ -9,7 +9,6 @@ import LatencyBreakdownChart from "../components/dashboard/LatencyBreakdownChart
 import AuditTraceSummary from "../components/dashboard/AuditTraceSummary.jsx";
 import RetrievalSummary from "../components/dashboard/RetrievalSummary.jsx";
 import RecentDecisionsTable from "../components/dashboard/RecentDecisionsTable.jsx";
-import InstrumentationGapsPanel from "../components/dashboard/InstrumentationGapsPanel.jsx";
 
 function available(value) {
   return value !== null && value !== undefined;
@@ -66,7 +65,6 @@ export default function Dashboard() {
       </section>
 
       <GovernanceCard governance={metrics?.governance} />
-      <InstrumentationGapsPanel gaps={metrics?.instrumentation_gaps || []} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ActivityChart data={activity} />

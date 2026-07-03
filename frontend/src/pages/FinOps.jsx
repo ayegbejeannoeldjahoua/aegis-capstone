@@ -3,7 +3,6 @@ import { DollarSign, Gauge, Hash, RefreshCw, ShieldX, TrendingUp } from "lucide-
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client.js";
 import MetricCard from "../components/dashboard/MetricCard.jsx";
-import InstrumentationGapsPanel from "../components/dashboard/InstrumentationGapsPanel.jsx";
 
 function available(value) {
   return value !== null && value !== undefined;
@@ -177,8 +176,6 @@ export default function FinOps() {
           {available(fin.projected_daily_spend) && <MetricCard title="Projected daily spend" value={fin.projected_daily_spend} unit="USD" icon={TrendingUp} color="violet" />}
         </div>
       </section>
-
-      <InstrumentationGapsPanel gaps={summary?.instrumentation_gaps || []} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <Panel title="Cost breakdown">
