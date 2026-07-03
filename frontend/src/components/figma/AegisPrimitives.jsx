@@ -1,5 +1,6 @@
 import React from "react";
 import { ArrowLeft, LogOut } from "lucide-react";
+import ThemeToggle from "../../theme/ThemeToggle.jsx";
 
 export function cx(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -90,6 +91,7 @@ export function ShellTopBar({ onBack, onLogout, profile, claims = {}, section })
         {section && <span className="aegis-topbar-section">{section}</span>}
       </div>
       <div className="aegis-topbar-right">
+        <ThemeToggle />
         <span className="aegis-user-email">{email}</span>
         {role && (
           <AegisBadge>

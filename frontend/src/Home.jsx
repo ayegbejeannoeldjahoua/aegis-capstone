@@ -12,6 +12,7 @@ import {
   User,
 } from "lucide-react";
 import { AegisBadge, AegisButton, AegisLogo } from "./components/figma/AegisPrimitives.jsx";
+import ThemeToggle from "./theme/ThemeToggle.jsx";
 
 const HOME_CARDS = [
   {
@@ -71,6 +72,7 @@ export default function Home({ profile, onLogout, go }) {
           <span className="aegis-topbar-section">Home</span>
         </div>
         <div className="aegis-topbar-right">
+          <ThemeToggle />
           <span className="aegis-user-email">{profile ? profile.email : "user"}</span>
           <AegisBadge>{role}<span>{scope}</span></AegisBadge>
           <AegisButton variant="ghost" icon={LogOut} onClick={onLogout}>Log out</AegisButton>

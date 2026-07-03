@@ -36,13 +36,13 @@ export default function SignIn() {
   return (
     <div
       className="min-h-screen w-full flex flex-col items-center justify-center px-4"
-      style={{ background: "#090c14", color: "#e8eaf0" }}
+      style={{ background: "var(--bg-deep)", color: "var(--text)" }}
     >
       {/* Brand mark above the card */}
       <div className="flex flex-col items-center gap-3 mb-8 select-none">
         <div
-          className="w-14 h-14 rounded-full flex items-center justify-center font-bold text-xl text-white shadow-lg"
-          style={{ background: "#4a7cf8" }}
+          className="w-14 h-14 rounded-full flex items-center justify-center font-bold text-xl shadow-lg"
+          style={{ background: "var(--blue)", color: "var(--button-text)" }}
           aria-hidden="true"
         >
           A
@@ -51,7 +51,7 @@ export default function SignIn() {
           <div className="text-lg font-semibold tracking-tight">Aegis</div>
           <div
             className="text-[10px] font-mono tracking-[0.18em] uppercase mt-0.5"
-            style={{ color: "#4a7cf8" }}
+            style={{ color: "var(--blue)" }}
           >
             AI Governance Platform
           </div>
@@ -63,17 +63,17 @@ export default function SignIn() {
         onSubmit={onSubmit}
         className="w-full max-w-sm rounded-xl p-7 flex flex-col gap-5"
         style={{
-          background: "#131829",
-          border: "1px solid rgba(255,255,255,0.07)",
+          background: "var(--bg-card)",
+          border: "1px solid var(--line)",
           boxShadow:
-            "0 20px 40px -12px rgba(0,0,0,0.5), 0 0 0 1px rgba(74,124,248,0.05)",
+            "0 20px 40px -12px var(--shadow-card), 0 0 0 1px color-mix(in srgb, var(--blue) 5%, transparent)",
         }}
       >
         <div>
           <h1 className="text-base font-semibold tracking-tight">Sign in</h1>
           <p
             className="text-xs mt-1 font-mono"
-            style={{ color: "#6b7a96" }}
+            style={{ color: "var(--muted)" }}
           >
             Use your organisation email to continue.
           </p>
@@ -82,7 +82,7 @@ export default function SignIn() {
         <label className="flex flex-col gap-1.5">
           <span
             className="text-[10px] font-mono tracking-widest uppercase"
-            style={{ color: "#6b7a96" }}
+            style={{ color: "var(--muted)" }}
           >
             Email
           </span>
@@ -95,15 +95,15 @@ export default function SignIn() {
             autoFocus
             className="w-full px-3 py-2 text-sm rounded-md outline-none transition-colors"
             style={{
-              background: "#0c1020",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "#e8eaf0",
+              background: "var(--bg-input)",
+              border: "1px solid var(--line)",
+              color: "var(--text)",
             }}
             onFocus={(e) =>
-              (e.currentTarget.style.borderColor = "rgba(74,124,248,0.6)")
+              (e.currentTarget.style.borderColor = "var(--blue)")
             }
             onBlur={(e) =>
-              (e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)")
+              (e.currentTarget.style.borderColor = "var(--line)")
             }
           />
         </label>
@@ -116,7 +116,7 @@ export default function SignIn() {
         <label className="flex flex-col gap-1.5">
           <span
             className="text-[10px] font-mono tracking-widest uppercase"
-            style={{ color: "#6b7a96" }}
+            style={{ color: "var(--muted)" }}
           >
             Password
           </span>
@@ -128,14 +128,14 @@ export default function SignIn() {
             aria-hidden="true"
             className="w-full px-3 py-2 text-sm rounded-md outline-none cursor-not-allowed"
             style={{
-              background: "#0c1020",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "#6b7a96",
+              background: "var(--bg-input)",
+              border: "1px solid var(--line)",
+              color: "var(--muted)",
             }}
           />
           <span
             className="text-[10px] font-mono mt-0.5"
-            style={{ color: "#6b7a96" }}
+            style={{ color: "var(--muted)" }}
           >
             Collected securely on the next screen.
           </span>
@@ -146,16 +146,16 @@ export default function SignIn() {
           disabled={submitting}
           className="w-full py-2.5 rounded-md text-sm font-medium transition-opacity"
           style={{
-            background: "#4a7cf8",
-            color: "white",
+            background: "var(--blue)",
+            color: "var(--button-text)",
             opacity: submitting ? 0.6 : 1,
             cursor: submitting ? "wait" : "pointer",
           }}
           onMouseEnter={(e) =>
-            !submitting && (e.currentTarget.style.background = "#3a6ce8")
+            !submitting && (e.currentTarget.style.background = "var(--blue-strong)")
           }
           onMouseLeave={(e) =>
-            !submitting && (e.currentTarget.style.background = "#4a7cf8")
+            !submitting && (e.currentTarget.style.background = "var(--blue)")
           }
         >
           {submitting ? "Redirecting…" : "Sign in"}
@@ -165,13 +165,13 @@ export default function SignIn() {
       {/* Footer notes — match the Figma mockup */}
       <div
         className="mt-6 text-[11px] font-mono text-center"
-        style={{ color: "#6b7a96" }}
+        style={{ color: "var(--muted)" }}
       >
         All sessions are policy-checked and audited
       </div>
       <div
         className="mt-1 text-[10px] font-mono text-center"
-        style={{ color: "rgba(107,122,150,0.6)" }}
+        style={{ color: "color-mix(in srgb, var(--muted) 60%, transparent)" }}
       >
         Aegis AI Governance Platform · v1.4.3
       </div>

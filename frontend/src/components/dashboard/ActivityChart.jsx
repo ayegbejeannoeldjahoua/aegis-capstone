@@ -1,7 +1,11 @@
 import React from "react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { chartTheme } from "../../theme/chartTheme.js";
+import { useTheme } from "../../theme/useTheme.js";
 
 export default function ActivityChart({ data }) {
+  const { theme } = useTheme();
+  const chart = chartTheme(theme);
   const series = (data || []).map((b) => ({
     h: b.hour ? new Date(b.hour).toLocaleTimeString([], { hour: "2-digit" }) : "",
     allow: b.allow, deny: b.deny,
@@ -12,12 +16,12 @@ export default function ActivityChart({ data }) {
       <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={series} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis dataKey="h" stroke="#64748b" fontSize={11} />
-            <YAxis stroke="#64748b" fontSize={11} />
-            <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-            <Area type="monotone" dataKey="allow" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.25} />
-            <Area type="monotone" dataKey="deny"  stackId="1" stroke="#f43f5e" fill="#f43f5e" fillOpacity={0.25} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+            <XAxis dataKey="h" stroke={chart.axis} fontSize={11} />
+            <YAxis stroke={chart.axis} fontSize={11} />
+            <Tooltip contentStyle={chart.tooltip} />
+            <Area type="monotone" dataKey="allow" stackId="1" stroke={chart.allow} fill={chart.allow} fillOpacity={0.25} />
+            <Area type="monotone" dataKey="deny"  stackId="1" stroke={chart.deny} fill={chart.deny} fillOpacity={0.25} />
           </AreaChart>
         </ResponsiveContainer>
       </div>

@@ -1,5 +1,7 @@
 import React from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { chartTheme } from "../../theme/chartTheme.js";
+import { useTheme } from "../../theme/useTheme.js";
 
 const LATENCY_KEYS = [
   ["pdp", "PDP"],
@@ -19,6 +21,8 @@ function formatMs(value) {
 }
 
 export default function LatencyBreakdownChart({ latency }) {
+  const { theme } = useTheme();
+  const chart = chartTheme(theme);
   const bars = LATENCY_KEYS.map(([key, label]) => ({
     stage: label,
     ms: latencyValue(latency?.[key]) ?? 0,
@@ -40,11 +44,11 @@ export default function LatencyBreakdownChart({ latency }) {
         {hasBars ? (
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={bars} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-              <XAxis dataKey="stage" stroke="#64748b" fontSize={11} />
-              <YAxis stroke="#64748b" fontSize={11} />
-              <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-              <Bar dataKey="ms" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+              <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+              <XAxis dataKey="stage" stroke={chart.axis} fontSize={11} />
+              <YAxis stroke={chart.axis} fontSize={11} />
+              <Tooltip contentStyle={chart.tooltip} />
+              <Bar dataKey="ms" fill={chart.bar} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (

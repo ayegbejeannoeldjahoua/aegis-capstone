@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Aegis · AI Governance Platform</title>
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem("aegis.theme");
+          document.documentElement.setAttribute("data-theme", saved === "light" ? "light" : "dark");
+        } catch (_) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
     <script src="/config.js"></script>
   </head>
   <body>

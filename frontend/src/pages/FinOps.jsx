@@ -3,6 +3,8 @@ import { DollarSign, Gauge, Hash, RefreshCw, ShieldX, TrendingUp } from "lucide-
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client.js";
 import MetricCard from "../components/dashboard/MetricCard.jsx";
+import { chartTheme } from "../theme/chartTheme.js";
+import { useTheme } from "../theme/useTheme.js";
 
 function available(value) {
   return value !== null && value !== undefined;
@@ -117,6 +119,8 @@ function RecentFinOpsEvents({ events }) {
 }
 
 export default function FinOps() {
+  const { theme } = useTheme();
+  const chart = chartTheme(theme);
   const [summary, setSummary] = useState(null);
   const [budget, setBudget] = useState([]);
   const [err, setErr] = useState("");
@@ -189,11 +193,11 @@ export default function FinOps() {
             {costByHour.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={costByHour} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis dataKey="hour" stroke="#64748b" fontSize={11} />
-                  <YAxis stroke="#64748b" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} formatter={(value) => money(value)} />
-                  <Bar dataKey="cost" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+                  <XAxis dataKey="hour" stroke={chart.axis} fontSize={11} />
+                  <YAxis stroke={chart.axis} fontSize={11} />
+                  <Tooltip contentStyle={chart.tooltip} formatter={(value) => money(value)} />
+                  <Bar dataKey="cost" fill={chart.cost} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -218,11 +222,11 @@ export default function FinOps() {
             {tokenByHour.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={tokenByHour} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                  <XAxis dataKey="hour" stroke="#64748b" fontSize={11} />
-                  <YAxis stroke="#64748b" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} formatter={(value) => compact(value)} />
-                  <Bar dataKey="tokens" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+                  <XAxis dataKey="hour" stroke={chart.axis} fontSize={11} />
+                  <YAxis stroke={chart.axis} fontSize={11} />
+                  <Tooltip contentStyle={chart.tooltip} formatter={(value) => compact(value)} />
+                  <Bar dataKey="tokens" fill={chart.bar} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (

@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import { initAuth, keycloak } from "./auth/keycloak.js";
+import { ThemeProvider } from "./theme/ThemeProvider.jsx";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root"));
@@ -20,7 +21,9 @@ function AuthSplash() {
 
 root.render(
   <React.StrictMode>
-    <AuthSplash />
+    <ThemeProvider>
+      <AuthSplash />
+    </ThemeProvider>
   </React.StrictMode>
 );
 
@@ -33,16 +36,20 @@ initAuth()
   .then(() => {
     root.render(
       <React.StrictMode>
-        {keycloak.authenticated ? <App /> : <AuthSplash />}
+        <ThemeProvider>
+          {keycloak.authenticated ? <App /> : <AuthSplash />}
+        </ThemeProvider>
       </React.StrictMode>
     );
   })
   .catch((e) => {
     root.render(
       <React.StrictMode>
-        <div className="fatal">
-          Authentication failed to initialize: {String(e?.message || e)}
-        </div>
+        <ThemeProvider>
+          <div className="fatal">
+            Authentication failed to initialize: {String(e?.message || e)}
+          </div>
+        </ThemeProvider>
       </React.StrictMode>
     );
   });
