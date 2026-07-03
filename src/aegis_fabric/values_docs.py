@@ -354,13 +354,28 @@ async def list_writable_scopes(
     return out
 
 
-def compose_values_cascade(tenant_id, team_id, role_id, user_email):
-    """Return a markdown summary of every values document that applies to the user,
-    ordered from broadest (organization) to narrowest (individual). Used by the chat
-    to fold the cascade into the model's system prompt."""
+_VALUE_SCOPE_ORDER = {
+    "organization": 1,
+    "department": 2,
+    "team": 3,
+    "role": 4,
+    "individual": 5,
+}
+_MAX_CASCADE_BODY_CHARS = 1200
+_MAX_VALUE_RULE_CHARS = 360
+
+
+def _values_row_value(row, key: str):
+    try:
+        return row[key]
+    except (KeyError, TypeError):
+        return getattr(row, key, None)
+
+
+def _values_cascade_rows(tenant_id, team_id, role_id, user_email):
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT scope_type, title, body_md FROM values_documents "
+        return list(conn.execute(
+            "SELECT id::text, scope_type, tenant_id, scope_id, title, body_md FROM values_documents "
             "WHERE (scope_type='organization') "
             "   OR (scope_type='department' AND tenant_id=%s) "
             "   OR (scope_type='team'       AND tenant_id=%s AND scope_id=%s) "
@@ -370,16 +385,63 @@ def compose_values_cascade(tenant_id, team_id, role_id, user_email):
             "  WHEN 'organization' THEN 1 WHEN 'department' THEN 2 "
             "  WHEN 'team' THEN 3 WHEN 'role' THEN 4 WHEN 'individual' THEN 5 END",
             (tenant_id, tenant_id, team_id, tenant_id, role_id, tenant_id, user_email),
-        ).fetchall()
+        ).fetchall())
+
+
+def _compose_values_cascade_from_rows(rows) -> str:
     if not rows:
         return ""
     parts = ["VALUES CASCADE that applies to this user (most-restrictive wins; "
              "individual narrows role narrows team narrows department narrows organization):"]
     for r in rows:
-        st = r["scope_type"]
-        parts.append("### [" + st.upper() + "] " + (r["title"] or ""))
-        body = (r["body_md"] or "").strip()
-        if len(body) > 1200:
-            body = body[:1200] + " ...(truncated)"
+        st = _values_row_value(r, "scope_type") or "unknown"
+        parts.append("### [" + st.upper() + "] " + (_values_row_value(r, "title") or ""))
+        body = (_values_row_value(r, "body_md") or "").strip()
+        if len(body) > _MAX_CASCADE_BODY_CHARS:
+            body = body[:_MAX_CASCADE_BODY_CHARS] + " ...(truncated)"
         parts.append(body)
     return (chr(10) + chr(10)).join(parts)
+
+
+def compose_values_cascade(tenant_id, team_id, role_id, user_email):
+    """Return a markdown summary of every values document that applies to the user,
+    ordered from broadest (organization) to narrowest (individual). Used by the chat
+    to fold the cascade into the model's system prompt."""
+    return _compose_values_cascade_from_rows(
+        _values_cascade_rows(tenant_id, team_id, role_id, user_email)
+    )
+
+
+def compose_values_context(tenant_id, team_id, role_id, user_email) -> dict:
+    """Return structured active values plus the existing prompt-ready cascade text.
+
+    The chat runner uses this as authoritative governance context and audit metadata.
+    It only includes documents applicable to the authenticated user's cascade.
+    """
+    rows = _values_cascade_rows(tenant_id, team_id, role_id, user_email)
+    active_values = []
+    for r in rows:
+        body = (_values_row_value(r, "body_md") or "").strip()
+        rule = body
+        if len(rule) > _MAX_VALUE_RULE_CHARS:
+            rule = rule[:_MAX_VALUE_RULE_CHARS] + " ...(truncated)"
+        scope = _values_row_value(r, "scope_type") or "unknown"
+        active_values.append({
+            "id": _values_row_value(r, "id"),
+            "scope": scope,
+            "scope_type": scope,
+            "scope_id": _values_row_value(r, "scope_id"),
+            "tenant_id": _values_row_value(r, "tenant_id"),
+            "title": _values_row_value(r, "title") or "",
+            "rule": rule,
+        })
+    active_values.sort(key=lambda v: _VALUE_SCOPE_ORDER.get(v.get("scope") or "", 99))
+    return {
+        "values_applied": bool(active_values),
+        "active_values": active_values,
+        "scopes": [v["scope"] for v in active_values],
+        "value_document_ids": [v["id"] for v in active_values if v.get("id")],
+        "value_titles": [v["title"] for v in active_values if v.get("title")],
+        "constraints_detected": [],
+        "cascade_text": _compose_values_cascade_from_rows(rows),
+    }

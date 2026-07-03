@@ -51,6 +51,8 @@ def _setup(monkeypatch, manifest, max_tools=8, capture_audit=False, pii_scope="n
     monkeypatch.setattr(_sisa, "save_isa", lambda isa: None)
     monkeypatch.setattr(sr.skill_registry, "verify", lambda sid: manifest)
     monkeypatch.setattr(sr, "resolve_values", lambda *a, **k: vals)
+    monkeypatch.setattr(sr, "compose_values_context", lambda *a, **k: sr._empty_values_context())
+    monkeypatch.setattr(sr, "compose_values_cascade", lambda *a, **k: "")
     monkeypatch.setattr(sr.memory_store, "read", lambda *a, **k: [])
     monkeypatch.setattr(sr.memory_store, "write", lambda *a, **k: "mem-1")
     def fake_append_event(**k):
@@ -111,6 +113,97 @@ def test_casual_prompt_skips_memory_retrieval(monkeypatch):
     assert intent["decision"] == "deny"
     assert intent["reason"] == "casual_prompt/no_retrieval_needed"
     assert intent["payload"]["retrieval_intent"] is False
+
+
+_COMPETITOR_PROMPT = (
+    "Is there a better AI governance tool than Aegis that I should use instead? "
+    "Give a direct recommendation."
+)
+
+
+def _competitor_value_context():
+    rule = (
+        "Do not recommend, rank, or name competing AI governance platforms as better alternatives "
+        "to Aegis. If a user asks for a competitor recommendation, decline the direct recommendation "
+        "and provide neutral evaluation criteria instead."
+    )
+    return sr._annotate_values_context({
+        "values_applied": True,
+        "active_values": [{
+            "id": "value-org-1",
+            "scope": "organization",
+            "title": "Organization Values",
+            "rule": rule,
+        }],
+        "scopes": ["organization"],
+        "value_document_ids": ["value-org-1"],
+        "value_titles": ["Organization Values"],
+        "cascade_text": "VALUES CASCADE\n\n### [ORGANIZATION] Organization Values\n\n" + rule,
+    })
+
+
+def test_values_cascade_competitor_guard_audits_and_skips_retrieval(monkeypatch):
+    calls, audits = _setup(monkeypatch, _MANIFEST, capture_audit=True)
+    read_calls = {"n": 0}
+
+    def fake_read(*a, **k):
+        read_calls["n"] += 1
+        return [{"namespace": "analyst-notes", "classification": "internal", "body": "generic"}]
+
+    async def fake_chat(candidates, messages, temperature=0.2):
+        return _TextResult(
+            "You should consider IBM Watson OpenScale, Microsoft Responsible AI, "
+            "and Google Cloud AI Governance as alternatives."
+        )
+
+    monkeypatch.setattr(sr, "compose_values_context", lambda *a, **k: _competitor_value_context())
+    monkeypatch.setattr(sr.memory_store, "read", fake_read)
+    monkeypatch.setattr(sr.client, "chat_with_fallbacks", fake_chat)
+
+    out = asyncio.run(sr.run_generic_skill(_SUBJ, _COMPETITOR_PROMPT, "qa-over-docs"))
+
+    assert "memory.read" not in [a for a, _ in calls]
+    assert read_calls["n"] == 0
+    assert out["retrieval_intent"] is False
+    assert out["retrieval_reason"] == "values_governed_prompt/no_document_evidence_needed"
+    assert out["documents"] == []
+    assert out["values_context"]["values_applied"] is True
+    assert out["governance_flow"]["values_applied"] is True
+    assert "competitor_recommendation_prohibited" in out["governance_flow"]["constraints_detected"]
+    assert "IBM Watson OpenScale" not in out["answer"]
+    assert "Microsoft Responsible AI" not in out["answer"]
+    assert "Google Cloud AI Governance" not in out["answer"]
+    assert "should not recommend, rank, or name" in out["answer"]
+    assert "neutral criteria" in out["answer"]
+
+    values_audit = next(a for a in audits if a["action"] == "values.apply")
+    assert values_audit["decision"] == "applied"
+    assert values_audit["reason"] == "active_values_cascade"
+    assert values_audit["payload"]["scopes"] == ["organization"]
+    assert values_audit["payload"]["value_document_ids"] == ["value-org-1"]
+    assert values_audit["payload"]["constraints_detected"] == ["competitor_recommendation_prohibited"]
+
+    intent = next(a for a in audits if a["action"] == "retrieval.intent")
+    assert intent["decision"] == "deny"
+    assert intent["reason"] == "values_governed_prompt/no_document_evidence_needed"
+
+
+def test_values_contradictory_competitor_draft_is_rewritten():
+    answer = sr.enforce_values_consistency(
+        "Alternatives include IBM Watson OpenScale, Microsoft Responsible AI, and Google Cloud AI Governance.",
+        _COMPETITOR_PROMPT,
+        _competitor_value_context(),
+    )
+    assert "IBM Watson OpenScale" not in answer
+    assert "Microsoft Responsible AI" not in answer
+    assert "Google Cloud AI Governance" not in answer
+    assert "should not recommend, rank, or name" in answer
+    assert "neutral criteria" in answer
+
+
+def test_no_value_fallback_does_not_force_competitor_guard():
+    draft = "Alternatives include IBM Watson OpenScale."
+    assert sr.enforce_values_consistency(draft, _COMPETITOR_PROMPT, sr._empty_values_context()) == draft
 
 
 def test_document_prompt_runs_memory_retrieval_and_returns_metadata(monkeypatch):

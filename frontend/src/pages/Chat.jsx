@@ -82,7 +82,7 @@ export default function Chat({ profile, onHome }) {
       const findings = Array.isArray(r.visible_inspector_findings)
         ? r.visible_inspector_findings
         : (Array.isArray(r.inspector_findings) ? r.inspector_findings.filter((f) => f?.display !== false) : []);
-      setLog((l) => [...l, { role: "assistant", text: r.answer || "(no answer returned)", meta, docs: Array.isArray(r.documents) ? r.documents : [], findings, isa: r.isa || null, trace_id: r.trace_id || null, skill_id: r.skill_id || "assistant" }]);
+      setLog((l) => [...l, { role: "assistant", text: r.answer || "(no answer returned)", meta, docs: Array.isArray(r.documents) ? r.documents : [], findings, governance: r.governance_flow || null, isa: r.isa || null, trace_id: r.trace_id || null, skill_id: r.skill_id || "assistant" }]);
     } catch (e) {
       setLog((l) => [...l, { role: "error", text: `Refused: ${String(e.message || e)}` }]);
     } finally { setBusy(false); }
@@ -142,6 +142,7 @@ export default function Chat({ profile, onHome }) {
                 )}
                 <article className={`bubble aegis-bubble ${m.role}`}>
                   <div className="bubble-body">{m.text}</div>
+                  {m.governance && <GovernanceFlow flow={m.governance} />}
                   {m.findings && m.findings.length > 0 && <SecurityFindings findings={m.findings} />}
                   {m.docs && m.docs.length > 0 && <RetrievalPanel docs={m.docs} />}
                   {m.isa && <DoneCriteria isa={m.isa} />}
@@ -169,6 +170,48 @@ export default function Chat({ profile, onHome }) {
           </form>
         </main>
       </div>
+    </div>
+  );
+}
+
+function GovernanceFlow({ flow }) {
+  const controls = Array.isArray(flow?.controls) ? flow.controls : [];
+  const values = Array.isArray(flow?.active_values) ? flow.active_values : [];
+  const constraints = Array.isArray(flow?.constraints_detected) ? flow.constraints_detected : [];
+  if (controls.length === 0 && values.length === 0) return null;
+  return (
+    <div className="bubble-docs aegis-bubble-docs aegis-governance-flow">
+      <small><ShieldCheck size={11} /> Governance flow</small>
+      <ol className="retrieval-list">
+        {controls.map((c, j) => (
+          <li key={`${c.label}-${j}`} className="retrieval-item">
+            <span className="retrieval-title">
+              {c.label}
+              {c.status && <span className="retrieval-canary-badge">{formatReason(c.status)}</span>}
+            </span>
+            <span className="retrieval-meta">
+              {c.detail && <span>{formatReason(c.detail)}</span>}
+              {Array.isArray(c.constraints) && c.constraints.map((name) => (
+                <span key={`${c.label}-${name}`}>{formatReason(name)}</span>
+              ))}
+            </span>
+          </li>
+        ))}
+        {values.map((v, j) => (
+          <li key={`${v.scope}-${v.title}-${j}`} className="retrieval-item">
+            <span className="retrieval-title">
+              {v.title || "Active value"}
+              {v.scope && <span className="retrieval-canary-badge">{formatReason(v.scope)}</span>}
+            </span>
+            {(v.rule || constraints.length > 0) && (
+              <span className="retrieval-meta">
+                {v.rule && <span>{v.rule}</span>}
+                {constraints.map((name) => <span key={`${v.title}-${name}`}>{formatReason(name)}</span>)}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

@@ -28,7 +28,7 @@ from .telemetry import tracer
 from .tools import mask_memories, run_tool, tool_resource
 from .usage import estimate_tokens, usage
 from .values import resolve_values
-from .values_docs import compose_values_cascade
+from .values_docs import compose_values_cascade, compose_values_context
 from .logging_config import get_logger
 
 logger = get_logger("aegis.skill_runner")
@@ -152,6 +152,232 @@ def _doc_related(prompt: str, namespaces) -> bool:
     Signals: document-ish words, "show me / what do you have / according to" phrasing, or a
     mention of one of the role's readable namespaces (team names)."""
     return _retrieval_intent(prompt, namespaces)[0]
+
+
+_COMPETITOR_RECOMMENDATION_INTENT = re.compile(
+    r"\b("
+    r"better\s+(?:ai\s+governance\s+)?(?:tool|platform|product|vendor)|"
+    r"best\s+(?:ai\s+governance\s+)?(?:tool|platform|product|vendor)|"
+    r"alternative(?:s)?\s+to\s+aegis|"
+    r"competitor(?:s)?|competing\s+(?:product|platform|tool|vendor)|"
+    r"should\s+i\s+use\s+instead|use\s+instead|"
+    r"recommend\s+(?:another|an?\s+alternative|a\s+different|a\s+better)\s+"
+    r"(?:tool|platform|product|vendor)|"
+    r"direct\s+recommendation|rank\s+(?:ai\s+governance\s+)?(?:tools|platforms|vendors)"
+    r")\b",
+    re.I,
+)
+_EXPLICIT_DOCUMENT_EVIDENCE = re.compile(
+    r"\b(documents?|docs?|files?|records?|transcripts?|notes?|memos?|reports?|polic(?:y|ies)|"
+    r"quote|opening\s+lines?|summari[sz]e|according\s+to|evidence|source|sources?|"
+    r"CS-[A-Z0-9-]+|INC-[A-Z0-9-]+)\b",
+    re.I,
+)
+_VALUES_CONTROL_PROMPT = re.compile(
+    r"\b(what|which|show|explain|tell)\b[^?\n]{0,120}\b(values?|governance\s+rules?|"
+    r"rules?|controls?)\b[^?\n]{0,120}\b(affected|applied|constrain|guided|governed)\b|"
+    r"\bvalues?\s+applied\b|\bgovernance\s+flow\b",
+    re.I,
+)
+_COMPETITOR_VALUE_PROHIBITION = re.compile(
+    r"\b(?:do\s+not|don't|never|avoid|decline|must\s+not|should\s+not|cannot|can't)\b"
+    r"[^.\n]{0,180}\b(?:recommend|rank|name|compare|list|provide|give)\b"
+    r"[^.\n]{0,180}\b(?:competitor|competing|alternative|rival|another|other|platform|tool|product|vendor)s?\b|"
+    r"\b(?:do\s+not|don't|never|avoid|decline|must\s+not|should\s+not|cannot|can't)\b"
+    r"[^.\n]{0,180}\b(?:competitor|competing|alternative|rival|another|other|platform|tool|product|vendor)s?\b"
+    r"[^.\n]{0,180}\b(?:recommend|rank|name|compare|list|provide|give)\b|"
+    r"\bdecline\b[^.\n]{0,120}\bdirect\b[^.\n]{0,80}\bcompetitor\b[^.\n]{0,80}\b(?:recommendation|comparison)\b|"
+    r"\bneutral\s+evaluation\s+criteria\b[^.\n]{0,120}\b(?:instead|rather)\b",
+    re.I,
+)
+_VALUES_UNSAFE_RECOMMENDATION = re.compile(
+    r"\b(i\s+recommend|my\s+recommendation\s+is|you\s+should\s+(?:use|choose|switch\s+to)|"
+    r"use\s+.+\s+instead|switch\s+to|better\s+than\s+aegis|"
+    r"alternatives?\s+(?:include|are)|competitors?\s+(?:include|are)|"
+    r"platforms?\s+such\s+as|tools?\s+such\s+as|vendors?\s+such\s+as)\b",
+    re.I,
+)
+
+
+def competitor_recommendation_intent(prompt: str) -> bool:
+    return bool(_COMPETITOR_RECOMMENDATION_INTENT.search(prompt or ""))
+
+
+def _explicit_document_evidence_request(prompt: str) -> bool:
+    return bool(_EXPLICIT_DOCUMENT_EVIDENCE.search(prompt or ""))
+
+
+def _values_control_prompt(prompt: str) -> bool:
+    return bool(_VALUES_CONTROL_PROMPT.search(prompt or "")) and not _explicit_document_evidence_request(prompt)
+
+
+def _empty_values_context() -> dict:
+    return {
+        "values_applied": False,
+        "active_values": [],
+        "scopes": [],
+        "value_document_ids": [],
+        "value_titles": [],
+        "constraints_detected": [],
+        "cascade_text": "",
+    }
+
+
+def _normalize_values_context(values_context) -> dict:
+    ctx = dict(values_context) if isinstance(values_context, dict) else {}
+    base = _empty_values_context()
+    base.update(ctx)
+    for key in ("active_values", "scopes", "value_document_ids", "value_titles", "constraints_detected"):
+        if not isinstance(base.get(key), list):
+            base[key] = []
+    base["values_applied"] = bool(base.get("values_applied") or base["active_values"])
+    base["cascade_text"] = str(base.get("cascade_text") or "")
+    return base
+
+
+def _values_text(values_context: dict) -> str:
+    ctx = _normalize_values_context(values_context)
+    parts = [ctx.get("cascade_text") or ""]
+    for item in ctx.get("active_values") or []:
+        if not isinstance(item, dict):
+            continue
+        parts.extend(str(item.get(k) or "") for k in ("scope", "title", "rule", "body_md"))
+    return "\n".join(parts)
+
+
+def active_values_prohibit_competitor_recommendations(values_context) -> bool:
+    return bool(_COMPETITOR_VALUE_PROHIBITION.search(_values_text(values_context)))
+
+
+def _values_constraints(values_context) -> list[str]:
+    ctx = _normalize_values_context(values_context)
+    found = set(str(c) for c in (ctx.get("constraints_detected") or []) if c)
+    if active_values_prohibit_competitor_recommendations(ctx):
+        found.add("competitor_recommendation_prohibited")
+    return sorted(found)
+
+
+def _annotate_values_context(values_context) -> dict:
+    ctx = _normalize_values_context(values_context)
+    ctx["constraints_detected"] = _values_constraints(ctx)
+    return ctx
+
+
+def _values_scope_phrase(values_context) -> str:
+    scopes = {str(s).lower() for s in (_normalize_values_context(values_context).get("scopes") or [])}
+    if "organization" in scopes:
+        return "active organization values"
+    if "department" in scopes or "team" in scopes or "role" in scopes or "individual" in scopes:
+        return "active values"
+    return "active organization/platform values"
+
+
+def _values_consistent_competitor_response(values_context) -> str:
+    return (
+        f"Under the {_values_scope_phrase(values_context)}, I should not recommend, rank, or name "
+        "competing AI governance platforms as better alternatives to Aegis. I can help evaluate "
+        "Aegis against your requirements using neutral criteria such as governance coverage, "
+        "auditability, model routing, tenant isolation, FinOps controls, PII handling, deployment fit, "
+        "integration needs, and operational risk."
+    )
+
+
+def answer_violates_values(answer: str, values_context: dict) -> bool:
+    if not active_values_prohibit_competitor_recommendations(values_context):
+        return False
+    text = answer or ""
+    if not text.strip():
+        return False
+    if "neutral evaluation criteria" in text.lower() and re.search(
+        r"\b(should\s+not|cannot|can't|do\s+not|decline)\b[^.\n]{0,120}\b(recommend|rank|name)\b",
+        text,
+        re.I,
+    ):
+        return False
+    return bool(_VALUES_UNSAFE_RECOMMENDATION.search(text))
+
+
+def enforce_values_consistency(answer: str, prompt: str, values_context: dict) -> str:
+    if not active_values_prohibit_competitor_recommendations(values_context):
+        return answer
+    if competitor_recommendation_intent(prompt) or answer_violates_values(answer, values_context):
+        return _values_consistent_competitor_response(values_context)
+    return answer
+
+
+def _public_values_context(values_context) -> dict:
+    ctx = _annotate_values_context(values_context)
+    active_values = []
+    for item in ctx.get("active_values") or []:
+        if not isinstance(item, dict):
+            continue
+        active_values.append({
+            "id": item.get("id"),
+            "scope": item.get("scope") or item.get("scope_type"),
+            "title": item.get("title") or "",
+            "rule": item.get("rule") or "",
+        })
+    return {
+        "values_applied": bool(ctx.get("values_applied")),
+        "active_values": active_values,
+        "scopes": ctx.get("scopes") or [],
+        "value_document_ids": ctx.get("value_document_ids") or [],
+        "value_titles": ctx.get("value_titles") or [],
+        "constraints_detected": ctx.get("constraints_detected") or [],
+    }
+
+
+def _governance_flow(values, values_context, retrieval_intent: bool, retrieval_reason: str,
+                     documents_count: int, visible_findings_count: int) -> dict:
+    public_values = _public_values_context(values_context)
+    constraints = public_values.get("constraints_detected") or []
+    value_detail = "no active values document matched this user"
+    if public_values.get("values_applied"):
+        scopes = ", ".join(public_values.get("scopes") or [])
+        if "competitor_recommendation_prohibited" in constraints:
+            value_detail = f"{scopes or 'active'} value prohibits competitor recommendation"
+        else:
+            value_detail = f"{scopes or 'active'} values applied"
+    controls = [
+        {
+            "label": "Values applied",
+            "status": "applied" if public_values.get("values_applied") else "none",
+            "detail": value_detail,
+            "constraints": constraints,
+        },
+        {
+            "label": "Policy checked",
+            "status": "checked",
+            "detail": f"role={getattr(values, 'role', '')}, tenant={getattr(values, 'tenant_id', '')}",
+        },
+        {
+            "label": "PII guard active",
+            "status": "active",
+            "detail": f"pii_scope={getattr(values, 'pii_scope', '')}",
+        },
+        {"label": "Model routing checked", "status": "checked", "detail": "provider and region policy evaluated"},
+        {"label": "FinOps guard checked", "status": "checked", "detail": "request and token budgets evaluated"},
+        {
+            "label": "Retrieval",
+            "status": "used" if retrieval_intent else "skipped",
+            "detail": retrieval_reason or ("documents shown=%s" % documents_count),
+        },
+    ]
+    if visible_findings_count:
+        controls.append({
+            "label": "Inspector findings",
+            "status": "visible",
+            "detail": f"{visible_findings_count} security finding(s) surfaced",
+        })
+    return {
+        **public_values,
+        "controls": controls,
+        "retrieval": {
+            "intent": bool(retrieval_intent),
+            "reason": retrieval_reason,
+            "documents_shown": documents_count,
+        },
+    }
 
 
 _STOP = {
@@ -956,6 +1182,18 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
                              {"stage": stage, "action": f.action, "inspector": f.inspector,
                               "finding_id": f.finding_id})
 
+        values_context = _empty_values_context()
+        try:
+            values_context = _annotate_values_context(await run_db(
+                compose_values_context,
+                tenant,
+                subject.team_id,
+                subject.role,
+                subject.email,
+            ))
+        except Exception as _e:
+            logger.warning("values context load failed: %s", _e)
+
         # 0) inspect the user prompt (advisory only — never blocks the principal)
         _pr, _pf = _insp.inspect("user_prompt", prompt, tenant_id=tenant)
         if _pf:
@@ -965,11 +1203,38 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
         d = await decide(subject, "skill.invoke", {"tenant_id": tenant, "skill_id": skill_id}, values)
         await aud("skill.invoke", skill_id, d, {"skill": skill_id})
         require(d)
+        if values_context.get("values_applied"):
+            await _audit(
+                trace_id,
+                tenant,
+                subject.email,
+                "values.apply",
+                "values_cascade",
+                values,
+                "applied",
+                ["active_values_cascade"],
+                {
+                    "scopes": values_context.get("scopes") or [],
+                    "value_document_ids": values_context.get("value_document_ids") or [],
+                    "value_titles": values_context.get("value_titles") or [],
+                    "constraints_detected": values_context.get("constraints_detected") or [],
+                },
+            )
 
         # 2) governed memory reads
         memories: list = []
         inspector_findings: list[dict] = []
         retrieval_intent, retrieval_reason = _retrieval_intent(prompt, reads)
+        values_governed_competitor_prompt = (
+            competitor_recommendation_intent(prompt)
+            and active_values_prohibit_competitor_recommendations(values_context)
+        )
+        if values_governed_competitor_prompt and not _explicit_document_evidence_request(prompt):
+            retrieval_intent = False
+            retrieval_reason = "values_governed_prompt/no_document_evidence_needed"
+        elif values_context.get("values_applied") and _values_control_prompt(prompt):
+            retrieval_intent = False
+            retrieval_reason = "values_governance_prompt/no_document_evidence_needed"
         span.set_attribute("retrieval.intent", retrieval_intent)
         span.set_attribute("retrieval.intent.reason", retrieval_reason)
         await _audit(trace_id, tenant, subject.email, "retrieval.intent", "memory", values,
@@ -1098,8 +1363,7 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
 
         system = ASSISTANT_SYSTEM_PROMPT + chr(10) + chr(10) + _governance_profile(values)
         try:
-            cascade_text = await run_db(compose_values_cascade,
-                tenant, subject.team_id, subject.role, subject.email)
+            cascade_text = values_context.get("cascade_text") or ""
             if cascade_text:
                 # Values cascade is going INTO the system prompt (highest-trust
                 # position), so an injection pattern here directly poisons
@@ -1213,6 +1477,15 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
             prompt=prompt,
             documents=retrieval_docs_meta,
         )
+        answer_content = enforce_values_consistency(answer_content, prompt, values_context)
+        governance_flow = _governance_flow(
+            values,
+            values_context,
+            retrieval_intent,
+            retrieval_reason,
+            len(retrieval_docs_meta),
+            len(visible_inspector_findings),
+        )
         usage_total = (
             (result.usage or {}).get("total_tokens")
             or ((result.usage or {}).get("prompt_tokens") or 0) + ((result.usage or {}).get("completion_tokens") or 0)
@@ -1279,6 +1552,8 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
                 "retrieval_intent": retrieval_intent, "retrieval_reason": retrieval_reason,
                 "inspector_findings": inspector_findings,
                 "visible_inspector_findings": visible_inspector_findings,
+                "values_context": _public_values_context(values_context),
+                "governance_flow": governance_flow,
                 "isa": isa_dict,
                 "tools_used": [t["tool"] for t in tool_outputs], "write_pending": write_pending,
                 "documents": retrieval_docs_meta,
