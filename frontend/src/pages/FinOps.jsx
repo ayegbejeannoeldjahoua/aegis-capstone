@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { DollarSign, Gauge, Hash, RefreshCw, ShieldX, TrendingUp } from "lucide-react";
+import { Activity, DollarSign, Gauge, Hash, RefreshCw, ShieldX, TrendingUp } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client.js";
-import InstrumentationGapsPanel from "../components/dashboard/InstrumentationGapsPanel.jsx";
 import MetricCard from "../components/dashboard/MetricCard.jsx";
 import { chartTheme } from "../theme/chartTheme.js";
 import { useTheme } from "../theme/useTheme.js";
@@ -58,6 +57,29 @@ function BreakdownList({ title, rows, labelKey, valueKey, formatter, empty = "No
   );
 }
 
+function ActivityList({ title, rows, labelKey, empty = "No requests recorded in this window" }) {
+  const max = Math.max(1, ...(rows || []).map((row) => Number(row.requests || 0)));
+  return (
+    <div>
+      <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">{title}</h3>
+      <ul className="space-y-2">
+        {(rows || []).slice(0, 6).map((row) => (
+          <li key={row[labelKey]} className="text-sm">
+            <div className="flex justify-between gap-3 mb-1">
+              <span className="text-slate-300 truncate">{row[labelKey] || "unknown"}</span>
+              <span className="text-slate-400">{compact(row.requests)} requests</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-slate-900/80">
+              <div className="h-1.5 rounded-full bg-blue-400" style={{ width: `${Math.max(6, (Number(row.requests || 0) / max) * 100)}%` }} />
+            </div>
+          </li>
+        ))}
+        {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">{empty}</li>}
+      </ul>
+    </div>
+  );
+}
+
 function BudgetRow({ tenant_id, role_id, token_budget_per_day, budget_tokens, tokens_used, spent_tokens, remaining_tokens, utilization_pct }) {
   const used = Number(tokens_used ?? spent_tokens ?? 0);
   const budget = Number(token_budget_per_day ?? budget_tokens ?? 0);
@@ -74,6 +96,38 @@ function BudgetRow({ tenant_id, role_id, token_budget_per_day, budget_tokens, to
       </div>
       <div className="mt-1 text-xs text-slate-500">{pct(pctValue)} used · {compact(remaining_tokens ?? 0)} remaining</div>
     </div>
+  );
+}
+
+function BudgetGovernance({ budgets, fin, budgetRows, budgetEmpty }) {
+  const eventCount = Number(budgets.event_count || 0);
+  const refusals = Number(budgets.budget_refusal_count ?? fin.budget_refusals ?? 0);
+  const routed = Number(budgets.model_routed_count || 0);
+  const unmetered = Number(budgets.unmetered_count || 0);
+  return (
+    <details className="rounded-2xl border border-slate-700/60 bg-slate-800/70">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">Budget Governance</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            {compact(eventCount)} checks · {compact(routed)} routed · {compact(refusals)} refusals
+            {unmetered ? ` · ${compact(unmetered)} unmetered` : ""}
+          </p>
+        </div>
+        <span className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">Expand</span>
+      </summary>
+      <div className="border-t border-slate-700/60 px-5 pb-5 pt-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-sm">
+          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Current burn: <span className="text-slate-100">{compact(budgets.current_burn_tokens)}</span></div>
+          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Remaining: <span className="text-slate-100">{compact(budgets.remaining_budget_tokens)}</span></div>
+          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Refusals: <span className="text-slate-100">{compact(refusals)}</span></div>
+        </div>
+        <div className="divide-y divide-slate-700/60">
+          {(budgetRows || []).slice(0, 8).map((row) => <BudgetRow key={`${row.tenant_id}-${row.role_id}`} {...row} />)}
+          {(!budgetRows || budgetRows.length === 0) && <div className="py-3 text-sm text-slate-500">{budgetEmpty}</div>}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -141,13 +195,12 @@ export default function FinOps() {
   const breakdowns = summary?.breakdowns || {};
   const tokens = summary?.token_breakdown || {};
   const budgets = summary?.budget_governance || {};
-  const gaps = summary?.instrumentation_gaps || [];
-  const gapFor = (metric) => gaps.some((gap) => gap.metric === metric);
   const budgetRows = budgets.daily_budgets || [];
-  const costEmpty = gapFor("spend_breakdowns") ? "Cost attribution is not instrumented yet" : "No cost records yet";
-  const budgetEmpty = gapFor("budget_utilization")
-    ? "Real token-budget burn is not instrumented yet"
-    : "No role budgets configured or no budgeted roles in scope";
+  const meteringNotice = fin.metering_notice || breakdowns.metering_notice;
+  const costEmpty = meteringNotice || "No cost records yet";
+  const budgetEmpty = budgets.event_count
+    ? "Budget checks recorded, but no token budgets are configured for scoped roles"
+    : "No budget checks recorded yet";
   const costByHour = (breakdowns.by_hour || []).map((row) => ({
     hour: row.hour ? new Date(row.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown",
     cost: Number(row.cost_usd || 0),
@@ -173,11 +226,11 @@ export default function FinOps() {
         </button>
       </div>
 
-      <InstrumentationGapsPanel gaps={gaps} />
-
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-200">Executive FinOps</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
+          {available(fin.requests_recorded) && <MetricCard title="Requests recorded" value={fin.requests_recorded} icon={Activity} color="blue" />}
+          {available(fin.model_routed_requests) && <MetricCard title="Model routed" value={fin.model_routed_requests} icon={Gauge} color="violet" />}
           {available(fin.tokens_today) && <MetricCard title="Tokens today" value={fin.tokens_today} icon={Hash} color="blue" />}
           {available(fin.estimated_cost_today) && <MetricCard title="Estimated cost today" value={fin.estimated_cost_today} unit="USD" icon={DollarSign} color="emerald" />}
           {available(fin.avg_cost_per_turn) && <MetricCard title="Avg cost / chat turn" value={fin.avg_cost_per_turn} unit="USD" icon={TrendingUp} color="blue" />}
@@ -189,11 +242,20 @@ export default function FinOps() {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <Panel title="Cost breakdown">
+          {meteringNotice && (
+            <div className="mb-4 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-sm text-slate-400">
+              {meteringNotice}
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <BreakdownList title="Spend by tenant" rows={breakdowns.by_tenant} labelKey="tenant_id" valueKey="cost_usd" formatter={money} empty={costEmpty} />
             <BreakdownList title="Spend by role" rows={breakdowns.by_role} labelKey="role_id" valueKey="cost_usd" formatter={money} empty={costEmpty} />
             <BreakdownList title="Spend by model" rows={breakdowns.by_model} labelKey="model" valueKey="cost_usd" formatter={money} empty="No model cost attribution yet" />
             <BreakdownList title="Spend by provider" rows={breakdowns.by_provider} labelKey="provider" valueKey="cost_usd" formatter={money} empty="No provider cost attribution yet" />
+          </div>
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <ActivityList title="Requests by provider" rows={breakdowns.requests_by_provider} labelKey="provider" />
+            <ActivityList title="Requests by model" rows={breakdowns.requests_by_model} labelKey="model" />
           </div>
           <div className="mt-5 h-52">
             {costByHour.length ? (
@@ -221,8 +283,8 @@ export default function FinOps() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <BreakdownList title="Tokens by tenant" rows={tokens.by_tenant} labelKey="tenant_id" valueKey="tokens" formatter={compact} />
             <BreakdownList title="Tokens by role" rows={tokens.by_role} labelKey="role_id" valueKey="tokens" formatter={compact} />
-            <BreakdownList title="Tokens by model" rows={tokens.by_model} labelKey="model" valueKey="tokens" formatter={compact} empty="No model token attribution yet" />
-            <BreakdownList title="Tokens by provider" rows={tokens.by_provider} labelKey="provider" valueKey="tokens" formatter={compact} empty="No provider token attribution yet" />
+            <BreakdownList title="Tokens by model" rows={tokens.by_model} labelKey="model" valueKey="tokens" formatter={compact} empty={meteringNotice || "No model token attribution yet"} />
+            <BreakdownList title="Tokens by provider" rows={tokens.by_provider} labelKey="provider" valueKey="tokens" formatter={compact} empty={meteringNotice || "No provider token attribution yet"} />
           </div>
           <div className="mt-5 h-52">
             {tokenByHour.length ? (
@@ -242,17 +304,7 @@ export default function FinOps() {
         </Panel>
       </div>
 
-      <Panel title="Budget governance">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-sm">
-          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Current burn: <span className="text-slate-100">{compact(budgets.current_burn_tokens)}</span></div>
-          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Remaining: <span className="text-slate-100">{compact(budgets.remaining_budget_tokens)}</span></div>
-          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Refusals: <span className="text-slate-100">{compact(budgets.budget_refusal_count ?? fin.budget_refusals)}</span></div>
-        </div>
-        <div className="divide-y divide-slate-700/60">
-          {(budgetRows || []).slice(0, 12).map((row) => <BudgetRow key={`${row.tenant_id}-${row.role_id}`} {...row} />)}
-          {(!budgetRows || budgetRows.length === 0) && <div className="py-4 text-sm text-slate-500">{budgetEmpty}</div>}
-        </div>
-      </Panel>
+      <BudgetGovernance budgets={budgets} fin={fin} budgetRows={budgetRows} budgetEmpty={budgetEmpty} />
 
       <RecentFinOpsEvents events={summary?.recent_events || []} />
     </div>

@@ -8,7 +8,6 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
-import resource
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -17,6 +16,11 @@ from .auth import AdminPrincipal, admin_principal
 from .db import get_conn, run_db
 from .audit import verify_chain
 from .operational_metrics import active_requests
+
+try:
+    import resource
+except ImportError:  # Windows test/dev environments do not provide resource.
+    resource = None  # type: ignore[assignment]
 
 router = APIRouter(prefix="/admin", tags=["dashboard"])
 
@@ -198,6 +202,8 @@ def _redis_health() -> dict:
 
 
 def _process_memory_mb() -> float | None:
+    if resource is None:
+        return None
     try:
         # Linux ru_maxrss is KiB.
         return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
@@ -554,6 +560,7 @@ async def finops_summary(hours: int = Query(24, le=168),
             params = [str(hours), principal.tenant_id] if scoped else [str(hours)]
             chat_table = bool(conn.execute("SELECT to_regclass('public.dashboard_chat_metrics') AS t").fetchone()["t"])
             stage_table = bool(conn.execute("SELECT to_regclass('public.dashboard_stage_metrics') AS t").fetchone()["t"])
+            finops_table = bool(conn.execute("SELECT to_regclass('public.finops_events') AS t").fetchone()["t"])
             chat_rows = []
             if chat_table:
                 chat_rows = conn.execute(
@@ -573,6 +580,22 @@ async def finops_summary(hours: int = Query(24, le=168),
                     FROM dashboard_stage_metrics
                     WHERE created_at >= now() - (%s || ' hours')::interval {tenant_clause}
                     ORDER BY created_at DESC
+                    """,
+                    params,
+                ).fetchall()
+            event_rows = []
+            if finops_table:
+                event_rows = conn.execute(
+                    f"""
+                    SELECT id, created_at, trace_id, request_id, tenant_id, user_email, role,
+                           action, decision, provider, model, input_tokens, output_tokens,
+                           total_tokens, estimated_cost_usd, budget_limit_usd,
+                           budget_remaining_usd, budget_limit_tokens, budget_remaining_tokens,
+                           budget_profile, reason, reached_model, blocked_before_model,
+                           status, metadata
+                    FROM finops_events
+                    WHERE created_at >= now() - (%s || ' hours')::interval {tenant_clause}
+                    ORDER BY created_at DESC, id DESC
                     """,
                     params,
                 ).fetchall()
@@ -608,8 +631,10 @@ async def finops_summary(hours: int = Query(24, le=168),
             return {
                 "chat_table": chat_table,
                 "stage_table": stage_table,
+                "finops_table": finops_table,
                 "chat_rows": [dict(r) for r in chat_rows],
                 "stage_rows": [dict(r) for r in stage_rows],
+                "event_rows": [dict(r) for r in event_rows],
                 "action_rows": [dict(r) for r in action_rows],
                 "tenant_rows": [dict(r) for r in tenant_rows],
                 "budget_denies": int(budget_denies or 0),
@@ -619,35 +644,63 @@ async def finops_summary(hours: int = Query(24, le=168),
     raw = await run_db(_q)
     chat_rows = raw["chat_rows"]
     stage_rows = raw["stage_rows"]
+    event_rows = raw.get("event_rows") or []
     chat_table_available = bool(raw["chat_table"])
     stage_table_available = bool(raw["stage_table"])
+    finops_table_available = bool(raw.get("finops_table"))
     gaps: list[dict[str, str]] = []
-
-    total_tokens = sum(int(r.get("tokens_total") or 0) for r in chat_rows) if chat_table_available else None
-    input_tokens = sum(int(r.get("prompt_tokens") or 0) for r in chat_rows) if chat_table_available else None
-    output_tokens = sum(int(r.get("completion_tokens") or 0) for r in chat_rows) if chat_table_available else None
-    request_count = len(chat_rows) if chat_table_available else 0
-    successful_turns = sum(1 for r in chat_rows if r.get("status") == "success") if chat_table_available else 0
-    cost_rows = [
-        float(r.get("estimated_cost_usd") or 0)
-        for r in chat_rows
-        if r.get("cost_instrumented") and r.get("estimated_cost_usd") is not None
-    ]
-    total_cost = round(sum(cost_rows), 6) if cost_rows else None
-    cost_available = bool(cost_rows)
-    budget_refusals = (
-        sum(1 for r in chat_rows if r.get("budget_refusal"))
-        if chat_table_available else raw["budget_denies"]
-    )
-    elapsed_fraction = max(1 / 1440, (datetime.now(timezone.utc).hour * 60 + datetime.now(timezone.utc).minute + 1) / 1440)
-    projected_daily_spend = round((total_cost or 0) / elapsed_fraction, 6) if cost_available else None
-    avg_cost_per_turn = round(total_cost / successful_turns, 6) if cost_available and successful_turns else None
 
     role_budgets: dict[tuple[str, str], int] = {}
     for role in raw["roles"]:
         caps = _json_dict(role.get("capabilities"))
         budget = int(caps.get("token_budget_per_day") or 0)
         role_budgets[(role["tenant_id"], role["role_id"])] = budget
+
+    model_by_trace: dict[str, dict[str, Any]] = {}
+    for row in stage_rows:
+        if row.get("stage") not in {"model", "model_error"}:
+            continue
+        meta = _metadata(row.get("metadata"))
+        model = str(meta.get("model") or "unknown")
+        provider = str(meta.get("provider") or "unknown")
+        trace_id = row.get("trace_id")
+        if trace_id and trace_id not in model_by_trace:
+            model_by_trace[trace_id] = {"model": model, "provider": provider, "latency_ms": row.get("duration_ms")}
+
+    def _row_time(row: dict[str, Any]) -> Any:
+        return row.get("created_at") or row.get("started_at")
+
+    def _hour_key(value: Any) -> str:
+        return value.replace(minute=0, second=0, microsecond=0).isoformat() if hasattr(value, "replace") else "unknown"
+
+    def _eventish_from_chat(row: dict[str, Any]) -> dict[str, Any]:
+        model_info = model_by_trace.get(row.get("trace_id")) or {}
+        status = row.get("status") or "unknown"
+        budget_refused = bool(row.get("budget_refusal"))
+        return {
+            "created_at": row.get("started_at"),
+            "trace_id": row.get("trace_id"),
+            "tenant_id": row.get("tenant_id"),
+            "user_email": row.get("subject"),
+            "role": row.get("role_id"),
+            "decision": "deny" if budget_refused else "allow",
+            "provider": model_info.get("provider"),
+            "model": model_info.get("model"),
+            "input_tokens": int(row.get("prompt_tokens") or 0),
+            "output_tokens": int(row.get("completion_tokens") or 0),
+            "total_tokens": int(row.get("tokens_total") or 0),
+            "estimated_cost_usd": row.get("estimated_cost_usd") if row.get("cost_instrumented") else None,
+            "budget_limit_tokens": role_budgets.get((row.get("tenant_id"), row.get("role_id"))) or None,
+            "budget_remaining_tokens": None,
+            "reason": row.get("refusal_reason") or row.get("error_type"),
+            "reached_model": bool(model_info) or int(row.get("tokens_total") or 0) > 0,
+            "blocked_before_model": status != "success" and not model_info,
+            "status": "refused_budget" if budget_refused else ("success" if status == "success" else "unknown"),
+            "metadata": {},
+        }
+
+    activity_rows = event_rows if finops_table_available else [_eventish_from_chat(r) for r in chat_rows]
+    activity_available = bool(finops_table_available or chat_table_available)
 
     tokens_by_tenant: Counter[str] = Counter()
     tokens_by_role: Counter[str] = Counter()
@@ -656,47 +709,89 @@ async def finops_summary(hours: int = Query(24, le=168),
     spend_by_tenant: Counter[str] = Counter()
     spend_by_role: Counter[str] = Counter()
     spend_by_hour: Counter[str] = Counter()
-    model_by_trace: dict[str, dict[str, Any]] = {}
     tokens_by_model: Counter[str] = Counter()
     tokens_by_provider: Counter[str] = Counter()
-    for row in stage_rows:
-        if row.get("stage") != "model":
-            continue
-        meta = _metadata(row.get("metadata"))
-        model = str(meta.get("model") or "unknown")
-        provider = str(meta.get("provider") or "unknown")
-        tokens = int(meta.get("tokens_total") or 0)
-        trace_id = row.get("trace_id")
-        if trace_id and trace_id not in model_by_trace:
-            model_by_trace[trace_id] = {"model": model, "provider": provider, "latency_ms": row.get("duration_ms")}
-        tokens_by_model[model] += tokens
-        tokens_by_provider[provider] += tokens
-
     spend_by_model: Counter[str] = Counter()
     spend_by_provider: Counter[str] = Counter()
-    for row in chat_rows:
+    requests_by_tenant: Counter[str] = Counter()
+    requests_by_role: Counter[str] = Counter()
+    requests_by_model: Counter[str] = Counter()
+    requests_by_provider: Counter[str] = Counter()
+    decision_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+
+    for row in activity_rows:
         tenant = row.get("tenant_id") or "unknown"
-        role = row.get("role_id") or "unknown"
+        role = row.get("role") or row.get("role_id") or "unknown"
+        model = row.get("model") or "unknown"
+        provider = row.get("provider") or "unknown"
         tokens = int(row.get("tokens_total") or 0)
+        cost_value = row.get("estimated_cost_usd")
+        cost = float(cost_value) if cost_value is not None else None
+        hour = _hour_key(_row_time(row))
+
+        requests_by_tenant[tenant] += 1
+        requests_by_role[role] += 1
+        if row.get("model"):
+            requests_by_model[model] += 1
+        if row.get("provider"):
+            requests_by_provider[provider] += 1
+        decision_counts[str(row.get("decision") or "unknown")] += 1
+        status_counts[str(row.get("status") or "unknown")] += 1
+
         tokens_by_tenant[tenant] += tokens
         tokens_by_role[role] += tokens
         tokens_by_role_key[(tenant, role)] += tokens
-        started = row.get("started_at")
-        hour = started.replace(minute=0, second=0, microsecond=0).isoformat() if hasattr(started, "replace") else "unknown"
         tokens_by_hour[hour] += tokens
-        if row.get("cost_instrumented") and row.get("estimated_cost_usd") is not None:
-            cost = float(row.get("estimated_cost_usd") or 0)
+        if row.get("model"):
+            tokens_by_model[model] += tokens
+        if row.get("provider"):
+            tokens_by_provider[provider] += tokens
+        if cost is not None:
             spend_by_tenant[tenant] += cost
             spend_by_role[role] += cost
             spend_by_hour[hour] += cost
-            model_info = model_by_trace.get(row.get("trace_id")) or {}
-            if model_info.get("model"):
-                spend_by_model[model_info["model"]] += cost
-            if model_info.get("provider"):
-                spend_by_provider[model_info["provider"]] += cost
+            if row.get("model"):
+                spend_by_model[model] += cost
+            if row.get("provider"):
+                spend_by_provider[provider] += cost
+
+    total_tokens = sum(int(r.get("tokens_total") or 0) for r in activity_rows) if activity_available else None
+    input_tokens = sum(int(r.get("input_tokens") or r.get("prompt_tokens") or 0) for r in activity_rows) if activity_available else None
+    output_tokens = sum(int(r.get("output_tokens") or r.get("completion_tokens") or 0) for r in activity_rows) if activity_available else None
+    request_count = len(activity_rows) if activity_available else 0
+    successful_turns = int(status_counts.get("success", 0)) if activity_available else 0
+    cost_rows = [
+        float(r.get("estimated_cost_usd") or 0)
+        for r in activity_rows
+        if r.get("estimated_cost_usd") is not None
+    ]
+    total_cost = round(sum(cost_rows), 6) if cost_rows else None
+    cost_available = bool(cost_rows)
+    budget_refusals = (
+        sum(1 for r in activity_rows if r.get("status") == "refused_budget" or r.get("decision") == "deny")
+        if activity_available else raw["budget_denies"]
+    )
+    elapsed_fraction = max(1 / 1440, (datetime.now(timezone.utc).hour * 60 + datetime.now(timezone.utc).minute + 1) / 1440)
+    projected_daily_spend = round((total_cost or 0) / elapsed_fraction, 6) if cost_available else None
+    avg_cost_per_turn = round(total_cost / successful_turns, 6) if cost_available and successful_turns else None
+    model_routed_requests = sum(1 for r in activity_rows if r.get("reached_model") or r.get("model") or r.get("provider"))
+    unmetered_requests = sum(
+        1 for r in activity_rows
+        if (r.get("reached_model") or r.get("model") or r.get("provider"))
+        and r.get("estimated_cost_usd") is None
+        and int(r.get("tokens_total") or 0) == 0
+    )
+    metering_notice = None
+    if request_count and not cost_available:
+        metering_notice = (
+            "Requests recorded, token/cost metering unavailable for this provider."
+            if not total_tokens
+            else "Requests recorded, cost metering unavailable for this provider."
+        )
 
     budget_rows = []
-    if chat_table_available:
+    if activity_available:
         for (tenant, role), budget in role_budgets.items():
             if budget <= 0:
                 continue
@@ -722,15 +817,17 @@ async def finops_summary(hours: int = Query(24, le=168),
     if not chat_table_available:
         _gap(gaps, "tokens_today", "dashboard_chat_metrics is not available")
         _gap(gaps, "budget_refusals", "budget refusals are only available from audit fallback")
+    if not finops_table_available:
+        _gap(gaps, "finops_events", "finops_events is not available")
     if not cost_available:
-        _gap(gaps, "estimated_cost", "model-call cost attribution is not recorded yet")
-        _gap(gaps, "spend_breakdowns", "cost breakdowns require estimated_cost_usd on chat metrics")
+        _gap(gaps, "estimated_cost", "model-call cost attribution is not recorded for this provider")
+        _gap(gaps, "spend_breakdowns", "cost breakdowns require provider cost metering")
     if not stage_table_available:
         _gap(gaps, "model_provider_breakdowns", "dashboard_stage_metrics is not available")
-    elif not tokens_by_model:
-        _gap(gaps, "model_provider_breakdowns", "no model stage telemetry recorded in this window")
-    if not chat_table_available:
-        _gap(gaps, "budget_utilization", "dashboard_chat_metrics is required for real token-budget burn")
+    elif not requests_by_model:
+        _gap(gaps, "model_provider_breakdowns", "no model routing telemetry recorded in this window")
+    if not activity_available:
+        _gap(gaps, "budget_utilization", "chat or FinOps event metrics are required for real token-budget burn")
     elif not budget_rows:
         _gap(gaps, "budget_utilization", "no token_budget_per_day values are configured for scoped roles")
 
@@ -740,36 +837,44 @@ async def finops_summary(hours: int = Query(24, le=168),
     def _token_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:
         return [{key: k, "tokens": int(v)} for k, v in counter.most_common()]
 
+    def _request_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:
+        return [{key: k, "requests": int(v)} for k, v in counter.most_common()]
+
     by_action = {
         r["action"]: {"count": int(r["n"]), "deny": int(r["deny"]), "cost_usd": None}
         for r in raw["action_rows"]
     }
     recent_events = []
-    for row in chat_rows[:25]:
-        model_info = model_by_trace.get(row.get("trace_id")) or {}
+    for row in activity_rows[:25]:
         recent_events.append({
-            "timestamp": _iso(row.get("started_at")),
+            "timestamp": _iso(_row_time(row)),
             "trace_id": row.get("trace_id"),
             "tenant_id": row.get("tenant_id"),
-            "role": row.get("role_id"),
-            "model": model_info.get("model"),
-            "provider": model_info.get("provider"),
-            "input_tokens": int(row.get("prompt_tokens") or 0),
-            "output_tokens": int(row.get("completion_tokens") or 0),
+            "role": row.get("role") or row.get("role_id"),
+            "model": row.get("model"),
+            "provider": row.get("provider"),
+            "input_tokens": int(row.get("input_tokens") or row.get("prompt_tokens") or 0),
+            "output_tokens": int(row.get("output_tokens") or row.get("completion_tokens") or 0),
             "total_tokens": int(row.get("tokens_total") or 0),
             "estimated_cost": float(row.get("estimated_cost_usd")) if row.get("estimated_cost_usd") is not None else None,
-            "budget_status": "refused" if row.get("budget_refusal") else "ok",
+            "budget_status": row.get("decision") or ("refused" if row.get("budget_refusal") else "ok"),
+            "status": row.get("status"),
+            "reason": row.get("reason") or row.get("refusal_reason"),
+            "reached_model": bool(row.get("reached_model")),
         })
 
     return {
         "hours": hours,
         "summary": {
+            "requests_recorded": request_count,
+            "model_routed_requests": model_routed_requests,
             "tokens_today": total_tokens,
             "estimated_cost_today": total_cost,
             "avg_cost_per_turn": avg_cost_per_turn,
             "budget_utilization_pct": budget_utilization,
             "budget_refusals": budget_refusals,
             "projected_daily_spend": projected_daily_spend,
+            "metering_notice": metering_notice,
         },
         "breakdowns": {
             "by_tenant": _cost_rows(spend_by_tenant, "tenant_id") if cost_available else [],
@@ -777,6 +882,11 @@ async def finops_summary(hours: int = Query(24, le=168),
             "by_model": _cost_rows(spend_by_model, "model") if cost_available else [],
             "by_provider": _cost_rows(spend_by_provider, "provider") if cost_available else [],
             "by_hour": [{"hour": k, "cost_usd": round(v, 6)} for k, v in sorted(spend_by_hour.items())] if cost_available else [],
+            "requests_by_tenant": _request_rows(requests_by_tenant, "tenant_id"),
+            "requests_by_role": _request_rows(requests_by_role, "role_id"),
+            "requests_by_model": _request_rows(requests_by_model, "model"),
+            "requests_by_provider": _request_rows(requests_by_provider, "provider"),
+            "metering_notice": metering_notice,
         },
         "token_breakdown": {
             "input_tokens": input_tokens,
@@ -793,7 +903,13 @@ async def finops_summary(hours: int = Query(24, le=168),
             "current_burn_tokens": used_budget_tokens if budget_rows else None,
             "remaining_budget_tokens": max(0, total_budget - used_budget_tokens) if budget_rows else None,
             "budget_refusal_count": budget_refusals,
+            "event_count": request_count,
+            "model_routed_count": model_routed_requests,
+            "unmetered_count": unmetered_requests,
+            "decision_counts": dict(decision_counts),
+            "status_counts": dict(status_counts),
             "top_budget_risks": budget_risks,
+            "recent_decisions": recent_events[:8],
         },
         "recent_events": recent_events,
         "budget_risks": budget_risks,

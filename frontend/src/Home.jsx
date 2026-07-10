@@ -1,14 +1,15 @@
 import React, { useMemo, useState } from "react";
 import {
   ChevronRight,
-  DollarSign,
+  CircleDollarSign,
   FileText,
   Gavel,
   Heart,
   LayoutDashboard,
   MessageSquare,
   Search,
-  Shield,
+  Settings,
+  ShieldCheck,
 } from "lucide-react";
 import { AegisBadge, AegisButton, AegisLogo, UserMenu } from "./components/figma/AegisPrimitives.jsx";
 import {
@@ -24,9 +25,9 @@ const CARD_ICONS = {
   chat: MessageSquare,
   dashboard: LayoutDashboard,
   audit: FileText,
-  governance: Gavel,
-  console: Shield,
-  finops: DollarSign,
+  governance: ShieldCheck,
+  console: Settings,
+  finops: CircleDollarSign,
   values: Heart,
 };
 
@@ -35,6 +36,7 @@ const COPY = {
     askPlaceholder: "Ask Aegis",
     askButton: "Ask Aegis",
     quickAccess: "Quick Access",
+    workspace: "Your workspace",
     administration: "Administration",
     signedIn: "Signed in",
     platform: "Platform admin workspace",
@@ -45,6 +47,7 @@ const COPY = {
     askPlaceholder: "Demander à Aegis",
     askButton: "Demander à Aegis",
     quickAccess: "Accès rapide",
+    workspace: "Votre espace",
     administration: "Administration",
     signedIn: "Connecté",
     platform: "Espace administrateur plateforme",
@@ -54,10 +57,10 @@ const COPY = {
 };
 
 function HomeCard({ card, onOpen }) {
-  const Icon = CARD_ICONS[card.id] || Shield;
+  const Icon = CARD_ICONS[card.id] || Gavel;
   return (
-    <button className="aegis-home-card" onClick={() => onOpen(card.id)} type="button">
-      <div className="aegis-home-card-icon"><Icon size={16} /></div>
+    <button className={`aegis-home-card card-${card.id}`} onClick={() => onOpen(card.id)} type="button" aria-label={`Open ${card.title}`}>
+      <div className="aegis-home-card-icon" aria-hidden="true"><Icon size={18} /></div>
       <div>
         <h2>{card.title}</h2>
         <p>{card.meta}</p>
@@ -74,6 +77,7 @@ export default function Home({ profile, claims = {}, onLogout, go }) {
   const copy = COPY[lang] || COPY.en;
   const sections = useMemo(() => landingSections(profile || {}), [profile]);
   const platformAdmin = isPlatformAdmin(profile || {});
+  const workspaceTitle = platformAdmin ? copy.quickAccess : copy.workspace;
   const role = profile?.role || "user";
   const tenant = profile?.tenant_id || "tenant pending";
   const scope = profile?.admin_scope || "none";
@@ -141,11 +145,11 @@ export default function Home({ profile, claims = {}, onLogout, go }) {
           <AegisButton type="submit">{copy.askButton}</AegisButton>
         </form>
 
-        <section className="aegis-home-section" aria-labelledby="quick-access-title">
+        <section className={`aegis-home-section ${platformAdmin ? "admin-layout" : "user-layout"}`} aria-labelledby="quick-access-title">
           <div className="aegis-home-section-head">
-            <h2 id="quick-access-title">{copy.quickAccess}</h2>
+            <h2 id="quick-access-title">{workspaceTitle}</h2>
           </div>
-          <div className="aegis-home-grid">
+          <div className={`aegis-home-grid ${platformAdmin ? "admin-grid" : "user-grid"}`}>
             {sections.quickAccess.map((card) => <HomeCard key={card.id} card={card} onOpen={openCard} />)}
           </div>
         </section>
@@ -155,7 +159,7 @@ export default function Home({ profile, claims = {}, onLogout, go }) {
             <div className="aegis-home-section-head">
               <h2 id="administration-title">{copy.administration}</h2>
             </div>
-            <div className="aegis-home-grid">
+            <div className="aegis-home-grid admin-grid">
               {sections.administration.map((card) => <HomeCard key={card.id} card={card} onOpen={openCard} />)}
             </div>
           </section>

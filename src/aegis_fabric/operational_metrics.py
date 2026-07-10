@@ -306,6 +306,120 @@ def exception_snapshot(exc: Exception) -> dict[str, Any] | None:
     return snapshot(status="error", error_type=exc.__class__.__name__, refusal_reason=str(exc)[:240])
 
 
+def _json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _model_stage(data: dict[str, Any]) -> dict[str, Any]:
+    for stage in data.get("stages") or []:
+        if stage.get("stage") == "model":
+            return _json_dict(stage.get("metadata"))
+    for stage in data.get("stages") or []:
+        if stage.get("stage") == "model_error":
+            return _json_dict(stage.get("metadata"))
+    return {}
+
+
+def _budget_profile(capabilities: dict[str, Any] | None) -> dict[str, Any]:
+    caps = _json_dict(capabilities)
+    return {
+        key: caps.get(key)
+        for key in (
+            "token_budget_per_day",
+            "daily_request_quota",
+            "rate_limit_per_minute",
+            "max_concurrent_requests",
+        )
+        if caps.get(key) not in (None, "")
+    }
+
+
+def finops_event_payload(
+    data: dict[str, Any],
+    capabilities: dict[str, Any] | str | None = None,
+    used_tokens_today: int | None = None,
+) -> dict[str, Any]:
+    """Build the non-sensitive FinOps event row for a persisted chat snapshot."""
+    model_meta = _model_stage(data)
+    provider = model_meta.get("provider")
+    model = model_meta.get("model")
+    reached_model = bool(model_meta and data.get("status") != "refused")
+    budget_profile = _budget_profile(_json_dict(capabilities))
+    token_budget = budget_profile.get("token_budget_per_day")
+    try:
+        token_budget = int(token_budget) if token_budget not in (None, "") else None
+    except (TypeError, ValueError):
+        token_budget = None
+
+    budget_refusal = bool(data.get("budget_refusal"))
+    status = str(data.get("status") or "unknown")
+    model_failed = bool(data.get("model_provider_errors")) and status != "success"
+
+    if budget_refusal:
+        event_status = "refused_budget"
+        decision = "deny"
+    elif model_failed:
+        event_status = "failed_provider"
+        decision = "allow" if token_budget else "skipped"
+    elif status == "success" and reached_model and not data.get("tokens_total") and data.get("estimated_cost_usd") is None:
+        event_status = "unmetered"
+        decision = "allow" if token_budget else "unmetered"
+    elif status == "success":
+        event_status = "success"
+        decision = "allow" if token_budget else "skipped"
+    else:
+        event_status = "unknown"
+        decision = "allow" if token_budget else "skipped"
+
+    remaining_tokens = None
+    if token_budget is not None and used_tokens_today is not None:
+        remaining_tokens = max(0, token_budget - int(used_tokens_today or 0))
+
+    return {
+        "created_at": data.get("ended_at") or data.get("started_at"),
+        "trace_id": data.get("trace_id"),
+        "request_id": None,
+        "tenant_id": data.get("tenant_id"),
+        "user_email": data.get("subject"),
+        "role": data.get("role_id"),
+        "action": "chat.turn",
+        "decision": decision,
+        "provider": provider,
+        "model": model,
+        "input_tokens": int(data.get("prompt_tokens") or 0) if data.get("prompt_tokens") is not None else None,
+        "output_tokens": int(data.get("completion_tokens") or 0) if data.get("completion_tokens") is not None else None,
+        "total_tokens": int(data.get("tokens_total") or 0) if data.get("tokens_total") is not None else None,
+        "estimated_cost_usd": data.get("estimated_cost_usd"),
+        "budget_limit_usd": None,
+        "budget_remaining_usd": None,
+        "budget_limit_tokens": token_budget,
+        "budget_remaining_tokens": remaining_tokens,
+        "budget_profile": budget_profile,
+        "reason": data.get("refusal_reason") or data.get("error_type"),
+        "reached_model": reached_model,
+        "blocked_before_model": not reached_model and status != "success",
+        "status": event_status,
+        "metadata": {
+            "skill_id": data.get("skill_id"),
+            "chat_status": status,
+            "error_type": data.get("error_type"),
+            "cost_instrumented": bool(data.get("cost_instrumented")),
+            "model_provider_errors": int(data.get("model_provider_errors") or 0),
+            "policy_decision_count": int(data.get("policy_decision_count") or 0),
+            "policy_allow_count": int(data.get("policy_allow_count") or 0),
+            "policy_deny_count": int(data.get("policy_deny_count") or 0),
+        },
+    }
+
+
 def persist_snapshot(data: dict[str, Any] | None) -> None:
     if not data:
         return
@@ -373,6 +487,70 @@ def persist_snapshot(data: dict[str, Any] | None) -> None:
                         stage["duration_ms"],
                         json.dumps(stage.get("metadata") or {}, sort_keys=True),
                     ),
+                )
+            has_finops_events = bool(conn.execute("SELECT to_regclass('public.finops_events') AS t").fetchone()["t"])
+            if has_finops_events:
+                role = conn.execute(
+                    "SELECT capabilities FROM roles WHERE tenant_id=%s AND role_id=%s",
+                    (data.get("tenant_id"), data.get("role_id")),
+                ).fetchone()
+                capabilities = role["capabilities"] if role else {}
+                used_tokens_today = conn.execute(
+                    """
+                    SELECT COALESCE(sum(tokens_total), 0)::bigint AS tokens
+                    FROM dashboard_chat_metrics
+                    WHERE tenant_id=%s AND role_id=%s AND started_at >= date_trunc('day', now())
+                    """,
+                    (data.get("tenant_id"), data.get("role_id")),
+                ).fetchone()["tokens"]
+                event = finops_event_payload(data, capabilities, int(used_tokens_today or 0))
+                conn.execute(
+                    """
+                    INSERT INTO finops_events(
+                      created_at, trace_id, request_id, tenant_id, user_email, role, action,
+                      decision, provider, model, input_tokens, output_tokens, total_tokens,
+                      estimated_cost_usd, budget_limit_usd, budget_remaining_usd,
+                      budget_limit_tokens, budget_remaining_tokens, budget_profile, reason,
+                      reached_model, blocked_before_model, status, metadata
+                    )
+                    VALUES (
+                      %(created_at)s, %(trace_id)s, %(request_id)s, %(tenant_id)s, %(user_email)s,
+                      %(role)s, %(action)s, %(decision)s, %(provider)s, %(model)s,
+                      %(input_tokens)s, %(output_tokens)s, %(total_tokens)s,
+                      %(estimated_cost_usd)s, %(budget_limit_usd)s, %(budget_remaining_usd)s,
+                      %(budget_limit_tokens)s, %(budget_remaining_tokens)s,
+                      %(budget_profile)s::jsonb, %(reason)s, %(reached_model)s,
+                      %(blocked_before_model)s, %(status)s, %(metadata)s::jsonb
+                    )
+                    ON CONFLICT (trace_id, action) DO UPDATE SET
+                      created_at=EXCLUDED.created_at,
+                      request_id=EXCLUDED.request_id,
+                      tenant_id=EXCLUDED.tenant_id,
+                      user_email=EXCLUDED.user_email,
+                      role=EXCLUDED.role,
+                      decision=EXCLUDED.decision,
+                      provider=EXCLUDED.provider,
+                      model=EXCLUDED.model,
+                      input_tokens=EXCLUDED.input_tokens,
+                      output_tokens=EXCLUDED.output_tokens,
+                      total_tokens=EXCLUDED.total_tokens,
+                      estimated_cost_usd=EXCLUDED.estimated_cost_usd,
+                      budget_limit_usd=EXCLUDED.budget_limit_usd,
+                      budget_remaining_usd=EXCLUDED.budget_remaining_usd,
+                      budget_limit_tokens=EXCLUDED.budget_limit_tokens,
+                      budget_remaining_tokens=EXCLUDED.budget_remaining_tokens,
+                      budget_profile=EXCLUDED.budget_profile,
+                      reason=EXCLUDED.reason,
+                      reached_model=EXCLUDED.reached_model,
+                      blocked_before_model=EXCLUDED.blocked_before_model,
+                      status=EXCLUDED.status,
+                      metadata=EXCLUDED.metadata
+                    """,
+                    {
+                        **event,
+                        "budget_profile": json.dumps(event["budget_profile"], sort_keys=True),
+                        "metadata": json.dumps(event["metadata"], sort_keys=True),
+                    },
                 )
     except Exception as exc:  # noqa: BLE001 - metrics must never break chat.
         logger.warning("dashboard metrics persist failed: %s", exc)

@@ -1,6 +1,7 @@
 export const LANGUAGE_STORAGE_KEY = "aegis.language";
 export const SUPPORTED_LANGUAGES = ["en", "fr"];
 export const USER_MENU_ITEMS = ["Profile", "Customize", "Log out"];
+export const LANDING_CARD_ICON_IDS = ["chat", "dashboard", "audit", "governance", "console", "finops", "values"];
 
 const PLATFORM_QUICK_ACCESS = [
   {
@@ -150,6 +151,43 @@ export function landingSections(profile = {}) {
     quickAccess: USER_QUICK_ACCESS,
     administration: [],
   };
+}
+
+export function assistantNavItems(profile = {}) {
+  const base = [
+    { id: "home", label: "Home", target: "home" },
+    { id: "chat", label: "AI Assistant", target: "chat" },
+  ];
+  const values = { id: "values", label: "Values", target: "values" };
+
+  if (isPlatformAdmin(profile)) {
+    return [
+      ...base,
+      { id: "dashboard", label: "Dashboard", target: "dashboard" },
+      { id: "audit", label: "Audit", target: "audit" },
+      { id: "governance", label: "Governance & Policy", target: "governance" },
+      { id: "console", label: "Console", target: "console" },
+      { id: "finops", label: "FinOps", target: "finops" },
+      values,
+    ];
+  }
+
+  if (profile?.admin_scope && profile.admin_scope !== "none") {
+    const items = [...base, { id: "dashboard", label: "Dashboard", target: "dashboard" }];
+    if (profile?.audit_scope && profile.audit_scope !== "none") {
+      items.push({ id: "audit", label: "Audit", target: "audit" });
+    }
+    if (profile?.can_edit_governance) {
+      items.push({ id: "governance", label: "Governance & Policy", target: "governance" });
+    }
+    if (profile?.can_manage_users || profile?.can_manage_roles || profile?.can_edit_governance) {
+      items.push({ id: "console", label: "Console", target: "console" });
+    }
+    items.push({ id: "finops", label: "FinOps", target: "finops" }, values);
+    return items;
+  }
+
+  return [...base, values];
 }
 
 export function capabilitySummary(profile = {}) {

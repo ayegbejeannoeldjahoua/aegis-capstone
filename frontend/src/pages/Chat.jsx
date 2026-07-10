@@ -4,10 +4,18 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleDollarSign,
   FileText,
+  Gavel,
+  Heart,
+  Home as HomeIcon,
+  LayoutDashboard,
   MessageSquare,
   Paperclip,
+  Plus,
+  Search,
   Send,
+  Settings,
   ShieldCheck,
   Sparkles,
   ThumbsDown,
@@ -21,6 +29,18 @@ import {
   ShellTopBar,
   cx,
 } from "../components/figma/AegisPrimitives.jsx";
+import { assistantNavItems } from "../homeModel.js";
+
+const NAV_ICONS = {
+  home: HomeIcon,
+  chat: MessageSquare,
+  dashboard: LayoutDashboard,
+  audit: FileText,
+  governance: ShieldCheck,
+  console: Settings,
+  finops: CircleDollarSign,
+  values: Heart,
+};
 
 function formatScore(value) {
   const n = Number(value);
@@ -59,11 +79,12 @@ function securityFinding(finding) {
   };
 }
 
-export default function Chat({ profile, claims = {}, onHome, onLogout }) {
+export default function Chat({ profile, claims = {}, onHome, onLogout, go }) {
   const [prompt, setPrompt] = useState("");
   const [log, setLog] = useState([]);
   const [busy, setBusy] = useState(false);
   const endRef = useRef(null);
+  const navItems = assistantNavItems(profile || {});
 
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" }); }, [log]);
 
@@ -88,33 +109,71 @@ export default function Chat({ profile, claims = {}, onHome, onLogout }) {
     } finally { setBusy(false); }
   }
 
+  function openNav(item) {
+    if (item.target === "home") onHome?.();
+    else if (item.target === "chat") return;
+    else if (item.target === "values") go?.("console", "values");
+    else if (item.target === "console") go?.("console");
+    else go?.("console", item.target);
+  }
+
+  function newChat() {
+    setLog([]);
+    setPrompt("");
+  }
+
   return (
     <div className="chat aegis-chat">
       <ShellTopBar onBack={onHome} profile={profile} claims={claims} onLogout={onLogout} section="Chat / Governed Assistant" />
       <div className="aegis-chat-body">
-        <aside className="aegis-chat-side" aria-label="Chat governance context">
-          <div className="aegis-chat-side-head">
-            <MessageSquare size={13} />
-            <span>Session</span>
+        <aside className="aegis-chat-nav" aria-label="AI Assistant navigation">
+          <nav>
+            {navItems.map((item) => {
+              const Icon = NAV_ICONS[item.id] || Gavel;
+              const active = item.id === "chat";
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={cx("aegis-chat-nav-item", active && "active")}
+                  aria-current={active ? "page" : undefined}
+                  aria-label={item.label}
+                  title={item.label}
+                  onClick={() => openNav(item)}
+                >
+                  <Icon size={15} aria-hidden="true" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        <aside className="aegis-chat-conversations" aria-label="Conversations">
+          <div className="aegis-chat-conversations-head">
+            <strong>Conversations</strong>
+            <button type="button" className="aegis-icon-button" aria-label="New chat" onClick={newChat}>
+              <Plus size={14} />
+            </button>
           </div>
-          <div className="aegis-chat-side-card">
-            <span className="aegis-side-label">Caller</span>
-            <strong>{profile?.email || "user"}</strong>
-            <small>{profile?.role || "role pending"} · {profile?.tenant_id || "tenant pending"}</small>
-          </div>
-          <div className="aegis-chat-side-card">
-            <span className="aegis-side-label">Governance rails</span>
-            <AegisBadge tone="green">audited</AegisBadge>
-            <AegisBadge>policy checked</AegisBadge>
-            <AegisBadge tone="amber">budget aware</AegisBadge>
-          </div>
-          <div className="aegis-chat-side-card">
-            <span className="aegis-side-label">Feedback</span>
-            <small>Assistant turns keep trace-linked thumbs feedback when an audit trace is returned.</small>
+          <label className="aegis-chat-search">
+            <Search size={13} />
+            <input type="search" placeholder="Search conversations" aria-label="Search conversations" />
+          </label>
+          <div className="aegis-chat-conversation-empty">
+            <MessageSquare size={16} />
+            <span>No saved conversations yet</span>
           </div>
         </aside>
 
         <main className="aegis-chat-main">
+          <div className="aegis-chat-main-head">
+            <div>
+              <h1>AI Assistant (Chat)</h1>
+              <p>{profile?.role || "role pending"} · {profile?.tenant_id || "tenant pending"}</p>
+            </div>
+            <AegisButton type="button" variant="ghost" icon={Plus} onClick={newChat}>New chat</AegisButton>
+          </div>
           <div className="aegis-chat-policybar">
             <ShieldCheck size={12} />
             <span>active controls</span>
@@ -129,8 +188,8 @@ export default function Chat({ profile, claims = {}, onHome, onLogout }) {
 
           <section className="chat-log aegis-chat-log" aria-live="polite">
             {log.length === 0 && (
-              <EmptyPanel icon={MessageSquare} title="Start a governed chat">
-                Requests are policy-checked, model-routed, budgeted and audited under your role.
+              <EmptyPanel icon={MessageSquare} title="Start a governed conversation">
+                Ask Aegis a question. Requests are policy-checked, model-routed, budgeted and audited under your role.
               </EmptyPanel>
             )}
             {log.map((m, i) => (

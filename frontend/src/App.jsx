@@ -20,6 +20,6 @@ export default function App() {
   const claims = keycloak.tokenParsed || {};
 
   if (view === "console") return <Console onHome={() => setView("home")} initialTab={consoleInitialTab} />;
-  if (view === "chat") return <Chat profile={profile} claims={claims} onHome={() => setView("home")} onLogout={logout} />;
+  if (view === "chat") return <Chat profile={profile} claims={claims} onHome={() => setView("home")} onLogout={logout} go={go} />;
   return <Home profile={profile} claims={claims} onLogout={logout} go={go} />;
 }

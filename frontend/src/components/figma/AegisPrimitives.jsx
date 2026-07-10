@@ -2,7 +2,13 @@ import React from "react";
 import { ArrowLeft, ChevronDown, LogOut, SlidersHorizontal, User, X } from "lucide-react";
 import ThemeToggle from "../../theme/ThemeToggle.jsx";
 import { useTheme } from "../../theme/useTheme.js";
-import { capabilitySummary, firstNameFromIdentity } from "../../homeModel.js";
+import {
+  capabilitySummary,
+  firstNameFromIdentity,
+  normalizeLanguage,
+  readStoredLanguage,
+  writeStoredLanguage,
+} from "../../homeModel.js";
 
 export function cx(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -186,6 +192,22 @@ export function UserMenu({ profile, claims = {}, onLogout }) {
   );
 }
 
+function TopBarLanguageToggle() {
+  const [language, setLanguage] = React.useState(() => readStoredLanguage());
+  const lang = normalizeLanguage(language);
+
+  function setLang(next) {
+    setLanguage(writeStoredLanguage(next));
+  }
+
+  return (
+    <div className="aegis-language-toggle" role="group" aria-label="Language selector">
+      <button type="button" className={lang === "en" ? "active" : ""} aria-pressed={lang === "en"} onClick={() => setLang("en")}>EN</button>
+      <button type="button" className={lang === "fr" ? "active" : ""} aria-pressed={lang === "fr"} onClick={() => setLang("fr")}>FR</button>
+    </div>
+  );
+}
+
 export function ShellTopBar({ onBack, onLogout, profile, claims = {}, section }) {
   return (
     <header className="aegis-topbar">
@@ -199,6 +221,7 @@ export function ShellTopBar({ onBack, onLogout, profile, claims = {}, section })
         {section && <span className="aegis-topbar-section">{section}</span>}
       </div>
       <div className="aegis-topbar-right">
+        <TopBarLanguageToggle />
         <UserMenu profile={profile} claims={claims} onLogout={onLogout} />
       </div>
     </header>
