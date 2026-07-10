@@ -4,6 +4,7 @@ Mounted under /admin. Backed by aggregations over `audit_events` and the
 existing `usage` Redis counters. All endpoints require admin_principal.
 """
 from __future__ import annotations
+import calendar
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -29,19 +30,20 @@ router = APIRouter(prefix="/admin", tags=["dashboard"])
 # Dashboard
 # ============================================================
 @router.get("/dashboard/metrics")
-async def dashboard_metrics(principal: AdminPrincipal = Depends(admin_principal)):
+async def dashboard_metrics(month: str | None = None, principal: AdminPrincipal = Depends(admin_principal)):
     """Operational and governance dashboard metrics.
 
     Platform admins and the shared admin token see all tenants. Tenant admins see
     the same shape scoped to their tenant. Non-admin roles are rejected by
     `admin_principal` before this handler runs.
     """
+    period_start, period_end, month_key, _ = _month_bounds(month)
+
     def _q():
         with get_conn() as conn:
             scoped = principal.scope != "platform" and principal.tenant_id
             tenant_clause = " AND tenant_id=%s" if scoped else ""
-            params = [principal.tenant_id] if scoped else []
-            today = conn.execute("SELECT date_trunc('day', now()) AS day").fetchone()["day"]
+            period_params = [period_start, period_end, principal.tenant_id] if scoped else [period_start, period_end]
 
             chat_table = bool(conn.execute("SELECT to_regclass('public.dashboard_chat_metrics') AS t").fetchone()["t"])
             stage_table = bool(conn.execute("SELECT to_regclass('public.dashboard_stage_metrics') AS t").fetchone()["t"])
@@ -50,10 +52,10 @@ async def dashboard_metrics(principal: AdminPrincipal = Depends(admin_principal)
                 f"""
                 SELECT trace_id, tenant_id, subject, action, resource, decision, reason, created_at
                 FROM audit_events
-                WHERE created_at >= date_trunc('day', now()) {tenant_clause}
+                WHERE created_at >= %s AND created_at < %s {tenant_clause}
                 ORDER BY created_at DESC, sequence_id DESC
                 """,
-                params,
+                period_params,
             ).fetchall()
             chat_rows = []
             if chat_table:
@@ -61,10 +63,10 @@ async def dashboard_metrics(principal: AdminPrincipal = Depends(admin_principal)
                     f"""
                     SELECT *
                     FROM dashboard_chat_metrics
-                    WHERE started_at >= date_trunc('day', now()) {tenant_clause}
+                    WHERE started_at >= %s AND started_at < %s {tenant_clause}
                     ORDER BY started_at DESC
                     """,
-                    params,
+                    period_params,
                 ).fetchall()
             stage_rows = []
             if stage_table:
@@ -72,18 +74,18 @@ async def dashboard_metrics(principal: AdminPrincipal = Depends(admin_principal)
                     f"""
                     SELECT trace_id, tenant_id, stage, duration_ms, metadata, created_at
                     FROM dashboard_stage_metrics
-                    WHERE created_at >= date_trunc('day', now()) {tenant_clause}
+                    WHERE created_at >= %s AND created_at < %s {tenant_clause}
                     ORDER BY created_at DESC
                     """,
-                    params,
+                    period_params,
                 ).fetchall()
             isas = conn.execute(
                 f"""
                 SELECT trace_id, tenant_id, total, met, verified, created_at
                 FROM isas
-                WHERE created_at >= date_trunc('day', now()) {tenant_clause}
+                WHERE created_at >= %s AND created_at < %s {tenant_clause}
                 """,
-                params,
+                period_params,
             ).fetchall()
             roles = conn.execute(
                 f"""
@@ -91,7 +93,7 @@ async def dashboard_metrics(principal: AdminPrincipal = Depends(admin_principal)
                 FROM roles
                 WHERE 1=1 {tenant_clause}
                 """,
-                params,
+                [principal.tenant_id] if scoped else [],
             ).fetchall()
             pg_connections = None
             try:
@@ -99,7 +101,11 @@ async def dashboard_metrics(principal: AdminPrincipal = Depends(admin_principal)
             except Exception:
                 pg_connections = None
             return {
-                "today": today,
+                "period": {
+                    "month": month_key,
+                    "start": period_start,
+                    "end": period_end,
+                },
                 "chat_table": chat_table,
                 "stage_table": stage_table,
                 "audit_rows": [dict(r) for r in audit_rows],
@@ -155,6 +161,22 @@ def _pct(part: float, total: float) -> float | None:
     if not total:
         return None
     return round((part / total) * 100.0, 1)
+
+
+def _month_bounds(month: str | None = None) -> tuple[datetime, datetime, str, int]:
+    now = datetime.now(timezone.utc)
+    if month:
+        try:
+            start = datetime.strptime(month, "%Y-%m").replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="month must use YYYY-MM format")
+    else:
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return start, end, start.strftime("%Y-%m"), calendar.monthrange(start.year, start.month)[1]
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
@@ -359,7 +381,9 @@ def _build_dashboard_metrics(raw: dict, principal: AdminPrincipal) -> dict:
 
     summary = {
         "requests_today": request_count,
+        "requests_month_to_date": request_count,
         "successful_chat_turns": successful_turns,
+        "successful_chat_turns_month_to_date": successful_turns,
         "error_rate": error_rate,
         "p95_end_to_end_latency_ms": _percentile(e2e, 0.95),
         "active_tenants": active_tenants,
@@ -437,6 +461,11 @@ def _build_dashboard_metrics(raw: dict, principal: AdminPrincipal) -> dict:
         "recent_decisions": recent_decisions,
         "instrumentation_gaps": gaps,
         "generated_at": generated_at,
+        "period": {
+            "month": raw.get("period", {}).get("month"),
+            "start": _iso(raw.get("period", {}).get("start")),
+            "end": _iso(raw.get("period", {}).get("end")),
+        },
         "scope": {"admin_scope": principal.scope, "tenant_id": principal.tenant_id},
         # Backwards-compatible fields for the original dashboard cards.
         "total_requests_today": request_count,
@@ -545,19 +574,23 @@ async def policy_resolve(req: ResolveReq,
 # FinOps
 # ============================================================
 @router.get("/finops/summary")
-async def finops_summary(hours: int = Query(24, le=168),
+async def finops_summary(month: str | None = None,
+                          hours: int | None = Query(None, le=168),
                           principal: AdminPrincipal = Depends(admin_principal)):
-    """Cost, token, and budget governance over the last N hours.
+    """Token, model-routing, and budget governance for the selected month.
 
-    Costs are returned only when a real cost value was recorded by the model
-    usage path. Audit action counts are preserved for activity context, but are
-    no longer multiplied by synthetic per-action prices.
+    ``hours`` is accepted for older clients but the product default is current
+    month-to-date. Cost fields remain nullable and are never synthesized.
     """
+    _ = hours
+    period_start, period_end, month_key, days_in_month = _month_bounds(month)
+
     def _q():
         with get_conn() as conn:
             scoped = principal.scope != "platform" and principal.tenant_id
             tenant_clause = " AND tenant_id=%s" if scoped else ""
-            params = [str(hours), principal.tenant_id] if scoped else [str(hours)]
+            period_params = [period_start, period_end, principal.tenant_id] if scoped else [period_start, period_end]
+            tenant_params = [principal.tenant_id] if scoped else []
             chat_table = bool(conn.execute("SELECT to_regclass('public.dashboard_chat_metrics') AS t").fetchone()["t"])
             stage_table = bool(conn.execute("SELECT to_regclass('public.dashboard_stage_metrics') AS t").fetchone()["t"])
             finops_table = bool(conn.execute("SELECT to_regclass('public.finops_events') AS t").fetchone()["t"])
@@ -567,10 +600,10 @@ async def finops_summary(hours: int = Query(24, le=168),
                     f"""
                     SELECT *
                     FROM dashboard_chat_metrics
-                    WHERE started_at >= now() - (%s || ' hours')::interval {tenant_clause}
+                    WHERE started_at >= %s AND started_at < %s {tenant_clause}
                     ORDER BY started_at DESC
                     """,
-                    params,
+                    period_params,
                 ).fetchall()
             stage_rows = []
             if stage_table:
@@ -578,47 +611,47 @@ async def finops_summary(hours: int = Query(24, le=168),
                     f"""
                     SELECT trace_id, tenant_id, stage, duration_ms, metadata, created_at
                     FROM dashboard_stage_metrics
-                    WHERE created_at >= now() - (%s || ' hours')::interval {tenant_clause}
+                    WHERE created_at >= %s AND created_at < %s {tenant_clause}
                     ORDER BY created_at DESC
                     """,
-                    params,
+                    period_params,
                 ).fetchall()
             event_rows = []
             if finops_table:
                 event_rows = conn.execute(
                     f"""
-                    SELECT id, created_at, trace_id, request_id, tenant_id, user_email, role,
-                           action, decision, provider, model, input_tokens, output_tokens,
-                           total_tokens, estimated_cost_usd, budget_limit_usd,
+                    SELECT id, created_at, trace_id, request_id, tenant_id, user_email,
+                           team_id, role, action, decision, provider, model, input_tokens,
+                           output_tokens, total_tokens, token_source, estimated_cost_usd, budget_limit_usd,
                            budget_remaining_usd, budget_limit_tokens, budget_remaining_tokens,
                            budget_profile, reason, reached_model, blocked_before_model,
                            status, metadata
                     FROM finops_events
-                    WHERE created_at >= now() - (%s || ' hours')::interval {tenant_clause}
+                    WHERE created_at >= %s AND created_at < %s {tenant_clause}
                     ORDER BY created_at DESC, id DESC
                     """,
-                    params,
+                    period_params,
                 ).fetchall()
             action_rows = conn.execute(f"""
                 SELECT action, count(*) AS n,
                        count(*) FILTER (WHERE decision='deny') AS deny
                 FROM audit_events
-                WHERE created_at >= now() - (%s || ' hours')::interval {tenant_clause}
+                WHERE created_at >= %s AND created_at < %s {tenant_clause}
                 GROUP BY 1 ORDER BY 2 DESC
-            """, params).fetchall()
+            """, period_params).fetchall()
             tenant_rows = conn.execute(f"""
                 SELECT tenant_id, count(*) AS n
                 FROM audit_events
-                WHERE created_at >= now() - (%s || ' hours')::interval {tenant_clause}
+                WHERE created_at >= %s AND created_at < %s {tenant_clause}
                 GROUP BY 1 ORDER BY 2 DESC
-            """, params).fetchall()
+            """, period_params).fetchall()
             budget_denies = conn.execute(f"""
                 SELECT count(*) AS n
                 FROM audit_events
-                WHERE created_at >= now() - (%s || ' hours')::interval {tenant_clause}
+                WHERE created_at >= %s AND created_at < %s {tenant_clause}
                   AND decision='deny'
                   AND (reason ILIKE '%%budget%%' OR reason ILIKE '%%quota%%')
-            """, params).fetchone()["n"]
+            """, period_params).fetchone()["n"]
             roles = conn.execute(
                 f"""
                 SELECT tenant_id, role_id, capabilities
@@ -626,9 +659,19 @@ async def finops_summary(hours: int = Query(24, le=168),
                 WHERE 1=1 {tenant_clause}
                 ORDER BY tenant_id, role_id
                 """,
-                [principal.tenant_id] if scoped else [],
+                tenant_params,
+            ).fetchall()
+            assignments = conn.execute(
+                f"""
+                SELECT tenant_id, lower(user_email) AS user_email, team_id, role_id
+                FROM user_assignments
+                WHERE 1=1 {tenant_clause}
+                ORDER BY tenant_id, team_id, role_id, user_email
+                """,
+                tenant_params,
             ).fetchall()
             return {
+                "period": {"month": month_key, "start": period_start, "end": period_end, "days_in_month": days_in_month},
                 "chat_table": chat_table,
                 "stage_table": stage_table,
                 "finops_table": finops_table,
@@ -639,6 +682,7 @@ async def finops_summary(hours: int = Query(24, le=168),
                 "tenant_rows": [dict(r) for r in tenant_rows],
                 "budget_denies": int(budget_denies or 0),
                 "roles": [dict(r) for r in roles],
+                "assignments": [dict(r) for r in assignments],
             }
 
     raw = await run_db(_q)
@@ -655,6 +699,10 @@ async def finops_summary(hours: int = Query(24, le=168),
         caps = _json_dict(role.get("capabilities"))
         budget = int(caps.get("token_budget_per_day") or 0)
         role_budgets[(role["tenant_id"], role["role_id"])] = budget
+    assignment_by_user = {
+        (row.get("tenant_id"), str(row.get("user_email") or "").lower()): row
+        for row in raw.get("assignments") or []
+    }
 
     model_by_trace: dict[str, dict[str, Any]] = {}
     for row in stage_rows:
@@ -677,18 +725,25 @@ async def finops_summary(hours: int = Query(24, le=168),
         model_info = model_by_trace.get(row.get("trace_id")) or {}
         status = row.get("status") or "unknown"
         budget_refused = bool(row.get("budget_refusal"))
+        email = str(row.get("subject") or "").lower()
+        assignment = assignment_by_user.get((row.get("tenant_id"), email)) or {}
+        prompt_tokens = int(row.get("prompt_tokens") or 0)
+        completion_tokens = int(row.get("completion_tokens") or 0)
+        total_tokens = int(row.get("tokens_total") or 0)
         return {
             "created_at": row.get("started_at"),
             "trace_id": row.get("trace_id"),
             "tenant_id": row.get("tenant_id"),
             "user_email": row.get("subject"),
+            "team_id": assignment.get("team_id"),
             "role": row.get("role_id"),
             "decision": "deny" if budget_refused else "allow",
             "provider": model_info.get("provider"),
             "model": model_info.get("model"),
-            "input_tokens": int(row.get("prompt_tokens") or 0),
-            "output_tokens": int(row.get("completion_tokens") or 0),
-            "total_tokens": int(row.get("tokens_total") or 0),
+            "input_tokens": prompt_tokens,
+            "output_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "token_source": "provider" if prompt_tokens or completion_tokens else ("estimated" if total_tokens else "unmetered"),
             "estimated_cost_usd": row.get("estimated_cost_usd") if row.get("cost_instrumented") else None,
             "budget_limit_tokens": role_budgets.get((row.get("tenant_id"), row.get("role_id"))) or None,
             "budget_remaining_tokens": None,
@@ -703,9 +758,12 @@ async def finops_summary(hours: int = Query(24, le=168),
     activity_available = bool(finops_table_available or chat_table_available)
 
     tokens_by_tenant: Counter[str] = Counter()
+    tokens_by_team: Counter[str] = Counter()
     tokens_by_role: Counter[str] = Counter()
+    tokens_by_user: Counter[str] = Counter()
     tokens_by_role_key: Counter[tuple[str, str]] = Counter()
     tokens_by_hour: Counter[str] = Counter()
+    token_source_counts: Counter[str] = Counter()
     spend_by_tenant: Counter[str] = Counter()
     spend_by_role: Counter[str] = Counter()
     spend_by_hour: Counter[str] = Counter()
@@ -714,7 +772,9 @@ async def finops_summary(hours: int = Query(24, le=168),
     spend_by_model: Counter[str] = Counter()
     spend_by_provider: Counter[str] = Counter()
     requests_by_tenant: Counter[str] = Counter()
+    requests_by_team: Counter[str] = Counter()
     requests_by_role: Counter[str] = Counter()
+    requests_by_user: Counter[str] = Counter()
     requests_by_model: Counter[str] = Counter()
     requests_by_provider: Counter[str] = Counter()
     decision_counts: Counter[str] = Counter()
@@ -722,16 +782,22 @@ async def finops_summary(hours: int = Query(24, le=168),
 
     for row in activity_rows:
         tenant = row.get("tenant_id") or "unknown"
+        user = row.get("user_email") or "unknown"
+        assignment = assignment_by_user.get((tenant, str(user).lower())) or {}
+        team = row.get("team_id") or assignment.get("team_id") or "unknown"
         role = row.get("role") or row.get("role_id") or "unknown"
         model = row.get("model") or "unknown"
         provider = row.get("provider") or "unknown"
         tokens = int(row.get("tokens_total") or 0)
+        token_source = row.get("token_source") or ("estimated" if tokens else "unmetered")
         cost_value = row.get("estimated_cost_usd")
         cost = float(cost_value) if cost_value is not None else None
         hour = _hour_key(_row_time(row))
 
         requests_by_tenant[tenant] += 1
+        requests_by_team[team] += 1
         requests_by_role[role] += 1
+        requests_by_user[user] += 1
         if row.get("model"):
             requests_by_model[model] += 1
         if row.get("provider"):
@@ -740,9 +806,12 @@ async def finops_summary(hours: int = Query(24, le=168),
         status_counts[str(row.get("status") or "unknown")] += 1
 
         tokens_by_tenant[tenant] += tokens
+        tokens_by_team[team] += tokens
         tokens_by_role[role] += tokens
+        tokens_by_user[user] += tokens
         tokens_by_role_key[(tenant, role)] += tokens
         tokens_by_hour[hour] += tokens
+        token_source_counts[str(token_source)] += 1
         if row.get("model"):
             tokens_by_model[model] += tokens
         if row.get("provider"):
@@ -772,8 +841,13 @@ async def finops_summary(hours: int = Query(24, le=168),
         sum(1 for r in activity_rows if r.get("status") == "refused_budget" or r.get("decision") == "deny")
         if activity_available else raw["budget_denies"]
     )
-    elapsed_fraction = max(1 / 1440, (datetime.now(timezone.utc).hour * 60 + datetime.now(timezone.utc).minute + 1) / 1440)
-    projected_daily_spend = round((total_cost or 0) / elapsed_fraction, 6) if cost_available else None
+    now = datetime.now(timezone.utc)
+    elapsed_month_fraction = max(
+        1 / max(days_in_month, 1),
+        ((now - period_start).total_seconds() / max((period_end - period_start).total_seconds(), 1.0))
+        if period_start <= now < period_end else 1.0,
+    )
+    projected_monthly_spend = round((total_cost or 0) / elapsed_month_fraction, 6) if cost_available else None
     avg_cost_per_turn = round(total_cost / successful_turns, 6) if cost_available and successful_turns else None
     model_routed_requests = sum(1 for r in activity_rows if r.get("reached_model") or r.get("model") or r.get("provider"))
     unmetered_requests = sum(
@@ -792,20 +866,22 @@ async def finops_summary(hours: int = Query(24, le=168),
 
     budget_rows = []
     if activity_available:
-        for (tenant, role), budget in role_budgets.items():
-            if budget <= 0:
+        for (tenant, role), daily_budget in role_budgets.items():
+            if daily_budget <= 0:
                 continue
+            budget = daily_budget * days_in_month
             used = int(tokens_by_role_key.get((tenant, role), 0))
             utilization = _pct(used, budget) or 0.0
             budget_rows.append({
                 "tenant_id": tenant,
                 "role_id": role,
-                "token_budget_per_day": budget,
+                "token_budget_per_day": daily_budget,
+                "monthly_token_budget": budget,
                 "tokens_used": used,
                 "remaining_tokens": max(0, budget - used),
                 "utilization_pct": utilization,
             })
-    total_budget = sum(r["token_budget_per_day"] for r in budget_rows)
+    total_budget = sum(r["monthly_token_budget"] for r in budget_rows)
     used_budget_tokens = sum(r["tokens_used"] for r in budget_rows)
     budget_utilization = _pct(used_budget_tokens, total_budget) if total_budget else None
     budget_risks = sorted(
@@ -815,7 +891,7 @@ async def finops_summary(hours: int = Query(24, le=168),
     )[:8]
 
     if not chat_table_available:
-        _gap(gaps, "tokens_today", "dashboard_chat_metrics is not available")
+        _gap(gaps, "tokens_month_to_date", "dashboard_chat_metrics is not available")
         _gap(gaps, "budget_refusals", "budget refusals are only available from audit fallback")
     if not finops_table_available:
         _gap(gaps, "finops_events", "finops_events is not available")
@@ -840,6 +916,51 @@ async def finops_summary(hours: int = Query(24, le=168),
     def _request_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:
         return [{key: k, "requests": int(v)} for k, v in counter.most_common()]
 
+    user_budget_monthly: dict[str, int] = {}
+    team_budget_monthly: Counter[str] = Counter()
+    tenant_budget_monthly: Counter[str] = Counter()
+    role_budget_monthly: Counter[str] = Counter()
+    assignments = raw.get("assignments") or []
+    for assignment in assignments:
+        tenant = assignment.get("tenant_id")
+        team = assignment.get("team_id") or "unknown"
+        email = assignment.get("user_email") or "unknown"
+        role = assignment.get("role_id") or "unknown"
+        daily_budget = role_budgets.get((tenant, role), 0)
+        monthly_budget = daily_budget * days_in_month if daily_budget else 0
+        if monthly_budget:
+            user_budget_monthly[email] = monthly_budget
+            team_budget_monthly[team] += monthly_budget
+            tenant_budget_monthly[tenant] += monthly_budget
+            role_budget_monthly[role] += monthly_budget
+    for (tenant, role), daily_budget in role_budgets.items():
+        if daily_budget and not any(a.get("tenant_id") == tenant and a.get("role_id") == role for a in assignments):
+            monthly_budget = daily_budget * days_in_month
+            tenant_budget_monthly[tenant] += monthly_budget
+            role_budget_monthly[role] += monthly_budget
+
+    def _token_budget_rows(
+        counter: Counter[str],
+        requests: Counter[str],
+        budgets: dict[str, int] | Counter[str],
+        key: str,
+    ) -> list[dict[str, Any]]:
+        labels = set(counter) | set(requests) | {k for k, v in budgets.items() if v}
+        ordered = sorted(labels, key=lambda item: (counter.get(item, 0), requests.get(item, 0), item), reverse=True)
+        rows = []
+        for label in ordered:
+            budget = int(budgets.get(label, 0) or 0)
+            tokens = int(counter.get(label, 0))
+            rows.append({
+                key: label,
+                "tokens": tokens,
+                "requests": int(requests.get(label, 0)),
+                "budget_tokens": budget or None,
+                "utilization_pct": _pct(tokens, budget) if budget else None,
+                "budget_source": "derived_from_role_daily_budget" if budget else "not_configured",
+            })
+        return rows
+
     by_action = {
         r["action"]: {"count": int(r["n"]), "deny": int(r["deny"]), "cost_usd": None}
         for r in raw["action_rows"]
@@ -850,12 +971,17 @@ async def finops_summary(hours: int = Query(24, le=168),
             "timestamp": _iso(_row_time(row)),
             "trace_id": row.get("trace_id"),
             "tenant_id": row.get("tenant_id"),
+            "user_email": row.get("user_email"),
+            "team_id": row.get("team_id") or (
+                assignment_by_user.get((row.get("tenant_id"), str(row.get("user_email") or "").lower())) or {}
+            ).get("team_id"),
             "role": row.get("role") or row.get("role_id"),
             "model": row.get("model"),
             "provider": row.get("provider"),
             "input_tokens": int(row.get("input_tokens") or row.get("prompt_tokens") or 0),
             "output_tokens": int(row.get("output_tokens") or row.get("completion_tokens") or 0),
             "total_tokens": int(row.get("tokens_total") or 0),
+            "token_source": row.get("token_source") or "unmetered",
             "estimated_cost": float(row.get("estimated_cost_usd")) if row.get("estimated_cost_usd") is not None else None,
             "budget_status": row.get("decision") or ("refused" if row.get("budget_refusal") else "ok"),
             "status": row.get("status"),
@@ -864,16 +990,26 @@ async def finops_summary(hours: int = Query(24, le=168),
         })
 
     return {
-        "hours": hours,
+        "month": month_key,
+        "period": {
+            "month": month_key,
+            "start": _iso(period_start),
+            "end": _iso(period_end),
+            "days_in_month": days_in_month,
+        },
+        "hours": None,
         "summary": {
             "requests_recorded": request_count,
             "model_routed_requests": model_routed_requests,
             "tokens_today": total_tokens,
+            "tokens_month_to_date": total_tokens,
             "estimated_cost_today": total_cost,
+            "estimated_cost_month_to_date": total_cost,
             "avg_cost_per_turn": avg_cost_per_turn,
             "budget_utilization_pct": budget_utilization,
             "budget_refusals": budget_refusals,
-            "projected_daily_spend": projected_daily_spend,
+            "projected_daily_spend": projected_monthly_spend,
+            "projected_monthly_spend": projected_monthly_spend,
             "metering_notice": metering_notice,
         },
         "breakdowns": {
@@ -883,7 +1019,9 @@ async def finops_summary(hours: int = Query(24, le=168),
             "by_provider": _cost_rows(spend_by_provider, "provider") if cost_available else [],
             "by_hour": [{"hour": k, "cost_usd": round(v, 6)} for k, v in sorted(spend_by_hour.items())] if cost_available else [],
             "requests_by_tenant": _request_rows(requests_by_tenant, "tenant_id"),
+            "requests_by_team": _request_rows(requests_by_team, "team_id"),
             "requests_by_role": _request_rows(requests_by_role, "role_id"),
+            "requests_by_user": _request_rows(requests_by_user, "user_email"),
             "requests_by_model": _request_rows(requests_by_model, "model"),
             "requests_by_provider": _request_rows(requests_by_provider, "provider"),
             "metering_notice": metering_notice,
@@ -892,8 +1030,11 @@ async def finops_summary(hours: int = Query(24, le=168),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
-            "by_tenant": _token_rows(tokens_by_tenant, "tenant_id"),
-            "by_role": _token_rows(tokens_by_role, "role_id"),
+            "token_source_counts": dict(token_source_counts),
+            "by_tenant": _token_budget_rows(tokens_by_tenant, requests_by_tenant, tenant_budget_monthly, "tenant_id"),
+            "by_team": _token_budget_rows(tokens_by_team, requests_by_team, team_budget_monthly, "team_id"),
+            "by_role": _token_budget_rows(tokens_by_role, requests_by_role, role_budget_monthly, "role_id"),
+            "by_user": _token_budget_rows(tokens_by_user, requests_by_user, user_budget_monthly, "user_email"),
             "by_model": _token_rows(tokens_by_model, "model"),
             "by_provider": _token_rows(tokens_by_provider, "provider"),
             "by_hour": [{"hour": k, "tokens": int(v)} for k, v in sorted(tokens_by_hour.items())],

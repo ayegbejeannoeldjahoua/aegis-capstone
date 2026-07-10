@@ -106,6 +106,17 @@ def _scope_clauses(tenant_id: str, scope: str, subject_email: str | None) -> tup
     return clauses, params
 
 
+def _month_filter(month_key: str | None) -> tuple[list[str], list]:
+    if not month_key:
+        return [], []
+    start = datetime.strptime(month_key, "%Y-%m").replace(tzinfo=timezone.utc)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return ["created_at >= %s", "created_at < %s"], [start, end]
+
+
 def trace(trace_id: str, tenant_id: str, scope: str = "tenant", subject_email: str | None = None) -> list[dict]:
     """Return events for a trace, filtered by the caller's audit_scope."""
     clauses, params = _scope_clauses(tenant_id, scope, subject_email)
@@ -136,10 +147,19 @@ def recent_traces(tenant_id: str, scope: str = "tenant", limit: int = 20) -> lis
     return list(rows)
 
 
-def last(tenant_id: str, scope: str = "tenant", subject_email: str | None = None, limit: int = 20) -> list[dict]:
+def last(
+    tenant_id: str,
+    scope: str = "tenant",
+    subject_email: str | None = None,
+    limit: int = 20,
+    month_key: str | None = None,
+) -> list[dict]:
     """Return recent events, filtered by the caller's audit_scope."""
     limit = max(1, min(limit, 200))
     clauses, params = _scope_clauses(tenant_id, scope, subject_email)
+    month_clauses, month_params = _month_filter(month_key)
+    clauses.extend(month_clauses)
+    params.extend(month_params)
     where = " AND ".join(clauses) if clauses else "TRUE"
     with get_conn() as conn:
         rows = conn.execute(

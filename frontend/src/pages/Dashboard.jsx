@@ -14,20 +14,26 @@ function available(value) {
   return value !== null && value !== undefined;
 }
 
+function currentMonthKey() {
+  return new Date().toISOString().slice(0, 7);
+}
+
 export default function Dashboard() {
   const [metrics, setMetrics] = useState(null);
   const [activity, setActivity] = useState([]);
+  const [month, setMonth] = useState(currentMonthKey());
   const [err, setErr] = useState("");
 
   async function load() {
     setErr("");
     try {
-      const m = await api("/admin/dashboard/metrics");
+      const qs = new URLSearchParams({ month });
+      const m = await api(`/admin/dashboard/metrics?${qs.toString()}`);
       const a = await api("/admin/dashboard/activity");
       setMetrics(m); setActivity(a.buckets || []);
     } catch (e) { setErr(String(e.message || e)); }
   }
-  useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, []);
+  useEffect(() => { load(); const i = setInterval(load, 15000); return () => clearInterval(i); }, [month]);
 
   const summary = metrics?.summary || {};
 
@@ -35,19 +41,31 @@ export default function Dashboard() {
     <div className="space-y-5">
       {err && <div className="error">{err}</div>}
       <div className="flex flex-col gap-1">
-        <h1 className="text-lg font-semibold text-slate-100">Dashboard</h1>
-        <div className="text-xs text-slate-500">
-          {metrics?.scope?.admin_scope === "tenant" ? `Tenant scope: ${metrics.scope.tenant_id}` : "Platform scope"}
-          {metrics?.generated_at ? ` · generated ${new Date(metrics.generated_at).toLocaleTimeString()}` : ""}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-lg font-semibold text-slate-100">Dashboard</h1>
+            <div className="text-xs text-slate-500">
+              {metrics?.scope?.admin_scope === "tenant" ? `Tenant scope: ${metrics.scope.tenant_id}` : "Platform scope"}
+              {metrics?.period?.month ? ` · ${metrics.period.month} month-to-date` : ""}
+              {metrics?.generated_at ? ` · generated ${new Date(metrics.generated_at).toLocaleTimeString()}` : ""}
+            </div>
+          </div>
+          <input
+            type="month"
+            value={month}
+            onChange={(event) => setMonth(event.target.value || currentMonthKey())}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200"
+            aria-label="Dashboard month"
+          />
         </div>
       </div>
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-200">Executive summary</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
-          <MetricCard title="Requests today" value={summary.requests_today ?? 0}
+          <MetricCard title="Requests MTD" value={summary.requests_month_to_date ?? summary.requests_today ?? 0}
                       icon={Activity} color="blue" />
-          <MetricCard title="Successful chat turns" value={summary.successful_chat_turns ?? 0}
+          <MetricCard title="Successful chat turns" value={summary.successful_chat_turns_month_to_date ?? summary.successful_chat_turns ?? 0}
                       icon={CheckCircle2} color="emerald" />
           {available(summary.error_rate) && (
             <MetricCard title="Error rate" value={summary.error_rate}

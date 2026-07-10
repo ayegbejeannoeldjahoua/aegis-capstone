@@ -1546,7 +1546,12 @@ async def run_generic_skill(subject: Subject, prompt: str, skill_id: str,
         except HTTPException:
             pass
 
-        await aud("response.return", "client", None, {"skill": skill_id, "model": result.model, "memory_id": mem_id})
+        await aud(
+            "response.return",
+            "client",
+            None,
+            {"skill": skill_id, "model": result.model, "provider": result.provider, "memory_id": mem_id},
+        )
         return {"trace_id": trace_id, "tenant_id": tenant, "role": subject.role, "skill_id": skill_id,
                 "model": result.model, "provider": result.provider, "memory_id": mem_id,
                 "retrieval_intent": retrieval_intent, "retrieval_reason": retrieval_reason,

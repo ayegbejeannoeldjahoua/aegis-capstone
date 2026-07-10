@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { api, canAdmin } from "../api/client.js";
 
+function currentMonthKey() {
+  return new Date().toISOString().slice(0, 7);
+}
+
 export default function Audit() {
   const [events, setEvents] = useState([]);
   const [scope, setScope] = useState("");
   const [limit, setLimit] = useState(50);
+  const [month, setMonth] = useState(currentMonthKey());
   const [trace, setTrace] = useState(null);
   const [traceId, setTraceId] = useState("");
   const [verify, setVerify] = useState(null);
@@ -13,11 +18,12 @@ export default function Audit() {
   async function load() {
     setErr(""); setTrace(null); setTraceId(""); setVerify(null);
     try {
-      const r = await api(`/admin/audit/last?limit=${limit}`, { admin: true });
+      const qs = new URLSearchParams({ limit: String(limit), month });
+      const r = await api(`/admin/audit/last?${qs.toString()}`, { admin: true });
       setEvents(r.events || []); setScope(r.scope || "");
     } catch (e) { setErr(String(e.message || e)); }
   }
-  useEffect(() => { if (canAdmin()) load(); }, []);
+  useEffect(() => { if (canAdmin()) load(); }, [limit, month]);
 
   async function openTrace(id) {
     if (!id) return;
@@ -43,6 +49,9 @@ export default function Audit() {
             <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
               {[50, 100, 200].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
+          </label>
+          <label>Month
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value || currentMonthKey())} />
           </label>
           <button className="ghost" onClick={load}>Refresh</button>
           <button className="ghost" onClick={doVerify}>Verify chain</button>

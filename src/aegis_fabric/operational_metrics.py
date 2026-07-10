@@ -36,6 +36,7 @@ class StageMetric:
 @dataclass
 class ChatMetrics:
     tenant_id: str
+    team_id: str
     subject: str
     role_id: str
     skill_id: str
@@ -75,6 +76,7 @@ def active_requests() -> int:
 def begin_chat_turn(subject: Subject, skill_id: str):
     metrics = ChatMetrics(
         tenant_id=subject.tenant_id,
+        team_id=subject.team_id,
         subject=subject.email,
         role_id=subject.role,
         skill_id=skill_id,
@@ -266,6 +268,7 @@ def snapshot(status: str = "success", error_type: str | None = None, refusal_rea
     return {
         "trace_id": metrics.trace_id,
         "tenant_id": metrics.tenant_id,
+        "team_id": metrics.team_id,
         "subject": metrics.subject,
         "role_id": metrics.role_id,
         "skill_id": metrics.skill_id,
@@ -351,6 +354,10 @@ def finops_event_payload(
     model_meta = _model_stage(data)
     provider = model_meta.get("provider")
     model = model_meta.get("model")
+    prompt_tokens = int(data.get("prompt_tokens") or 0)
+    completion_tokens = int(data.get("completion_tokens") or 0)
+    total_tokens = int(data.get("tokens_total") or 0)
+    token_source = "provider" if prompt_tokens or completion_tokens else ("estimated" if total_tokens else "unmetered")
     reached_model = bool(model_meta and data.get("status") != "refused")
     budget_profile = _budget_profile(_json_dict(capabilities))
     token_budget = budget_profile.get("token_budget_per_day")
@@ -389,14 +396,16 @@ def finops_event_payload(
         "request_id": None,
         "tenant_id": data.get("tenant_id"),
         "user_email": data.get("subject"),
+        "team_id": data.get("team_id"),
         "role": data.get("role_id"),
         "action": "chat.turn",
         "decision": decision,
         "provider": provider,
         "model": model,
-        "input_tokens": int(data.get("prompt_tokens") or 0) if data.get("prompt_tokens") is not None else None,
-        "output_tokens": int(data.get("completion_tokens") or 0) if data.get("completion_tokens") is not None else None,
-        "total_tokens": int(data.get("tokens_total") or 0) if data.get("tokens_total") is not None else None,
+        "input_tokens": prompt_tokens if data.get("prompt_tokens") is not None else None,
+        "output_tokens": completion_tokens if data.get("completion_tokens") is not None else None,
+        "total_tokens": total_tokens if data.get("tokens_total") is not None else None,
+        "token_source": token_source,
         "estimated_cost_usd": data.get("estimated_cost_usd"),
         "budget_limit_usd": None,
         "budget_remaining_usd": None,
@@ -409,6 +418,7 @@ def finops_event_payload(
         "status": event_status,
         "metadata": {
             "skill_id": data.get("skill_id"),
+            "team_id": data.get("team_id"),
             "chat_status": status,
             "error_type": data.get("error_type"),
             "cost_instrumented": bool(data.get("cost_instrumented")),
@@ -499,7 +509,7 @@ def persist_snapshot(data: dict[str, Any] | None) -> None:
                     """
                     SELECT COALESCE(sum(tokens_total), 0)::bigint AS tokens
                     FROM dashboard_chat_metrics
-                    WHERE tenant_id=%s AND role_id=%s AND started_at >= date_trunc('day', now())
+                    WHERE tenant_id=%s AND role_id=%s AND started_at >= date_trunc('month', now())
                     """,
                     (data.get("tenant_id"), data.get("role_id")),
                 ).fetchone()["tokens"]
@@ -507,17 +517,17 @@ def persist_snapshot(data: dict[str, Any] | None) -> None:
                 conn.execute(
                     """
                     INSERT INTO finops_events(
-                      created_at, trace_id, request_id, tenant_id, user_email, role, action,
+                      created_at, trace_id, request_id, tenant_id, user_email, team_id, role, action,
                       decision, provider, model, input_tokens, output_tokens, total_tokens,
-                      estimated_cost_usd, budget_limit_usd, budget_remaining_usd,
+                      token_source, estimated_cost_usd, budget_limit_usd, budget_remaining_usd,
                       budget_limit_tokens, budget_remaining_tokens, budget_profile, reason,
                       reached_model, blocked_before_model, status, metadata
                     )
                     VALUES (
                       %(created_at)s, %(trace_id)s, %(request_id)s, %(tenant_id)s, %(user_email)s,
-                      %(role)s, %(action)s, %(decision)s, %(provider)s, %(model)s,
+                      %(team_id)s, %(role)s, %(action)s, %(decision)s, %(provider)s, %(model)s,
                       %(input_tokens)s, %(output_tokens)s, %(total_tokens)s,
-                      %(estimated_cost_usd)s, %(budget_limit_usd)s, %(budget_remaining_usd)s,
+                      %(token_source)s, %(estimated_cost_usd)s, %(budget_limit_usd)s, %(budget_remaining_usd)s,
                       %(budget_limit_tokens)s, %(budget_remaining_tokens)s,
                       %(budget_profile)s::jsonb, %(reason)s, %(reached_model)s,
                       %(blocked_before_model)s, %(status)s, %(metadata)s::jsonb
@@ -527,6 +537,7 @@ def persist_snapshot(data: dict[str, Any] | None) -> None:
                       request_id=EXCLUDED.request_id,
                       tenant_id=EXCLUDED.tenant_id,
                       user_email=EXCLUDED.user_email,
+                      team_id=EXCLUDED.team_id,
                       role=EXCLUDED.role,
                       decision=EXCLUDED.decision,
                       provider=EXCLUDED.provider,
@@ -534,6 +545,7 @@ def persist_snapshot(data: dict[str, Any] | None) -> None:
                       input_tokens=EXCLUDED.input_tokens,
                       output_tokens=EXCLUDED.output_tokens,
                       total_tokens=EXCLUDED.total_tokens,
+                      token_source=EXCLUDED.token_source,
                       estimated_cost_usd=EXCLUDED.estimated_cost_usd,
                       budget_limit_usd=EXCLUDED.budget_limit_usd,
                       budget_remaining_usd=EXCLUDED.budget_remaining_usd,

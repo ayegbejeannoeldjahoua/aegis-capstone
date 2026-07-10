@@ -309,12 +309,19 @@ async def tenant_docs_count(tenant_id: str, principal: AdminPrincipal = Depends(
 
 
 @router.get("/audit/last")
-async def admin_audit_last(limit: int = 50, principal: AdminPrincipal = Depends(admin_principal)):
+async def admin_audit_last(
+    limit: int = 50,
+    month: str | None = None,
+    principal: AdminPrincipal = Depends(admin_principal),
+):
     """The audit ledger, filtered by the caller's audit_scope (platform/all = whole ledger)."""
     from .audit import last
 
-    return {"events": await run_db(last, principal.tenant_id, principal.audit_scope, principal.email, limit),
-            "scope": principal.audit_scope}
+    return {
+        "events": await run_db(last, principal.tenant_id, principal.audit_scope, principal.email, limit, month),
+        "scope": principal.audit_scope,
+        "month": month,
+    }
 
 
 @router.get("/audit/trace/{trace_id}")

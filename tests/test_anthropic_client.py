@@ -58,3 +58,17 @@ def test_anthropic_requires_key():
     p.api_key = None
     with pytest.raises(RuntimeError):
         asyncio.run(ModelClient()._anthropic(p, [ChatMessage(role="user", content="x")], 0.2))
+
+
+def test_openai_compatible_requires_provider_specific_key():
+    p = ModelProfile(
+        provider="nvidia",
+        model_id="nvidia/nemotron",
+        type="openai_compatible",
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=None,
+        region="AC1",
+        local=False,
+    )
+    with pytest.raises(RuntimeError, match="NVIDIA_API_KEY not configured"):
+        asyncio.run(ModelClient()._openai_compatible(p, [ChatMessage(role="user", content="x")], 0.2))

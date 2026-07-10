@@ -1938,6 +1938,65 @@ table { width: 100%; }
   font-size: 10px;
 }
 
+.aegis-chat-conversation-error {
+  margin: 10px 12px 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.aegis-chat-conversation-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+}
+
+.aegis-chat-conversation-item {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.aegis-chat-conversation-item:hover {
+  background: var(--bg-overlay);
+  border-color: var(--line-soft);
+}
+
+.aegis-chat-conversation-item.active {
+  background: var(--blue-soft);
+  border-color: color-mix(in srgb, var(--blue) 34%, transparent);
+}
+
+.aegis-chat-conversation-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.aegis-chat-conversation-item small {
+  color: var(--dim);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
 .aegis-chat-side {
   width: 184px;
   flex: 0 0 184px;
@@ -2030,6 +2089,46 @@ table { width: 100%; }
   color: var(--muted);
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 10px;
+}
+
+.aegis-chat-main-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.aegis-chat-model-select {
+  min-width: 180px;
+  max-width: 300px;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--muted);
+}
+
+.aegis-chat-model-select select {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.aegis-chat-model-select select:focus {
+  border: 0;
+  box-shadow: none;
 }
 
 .aegis-chat-policybar {
@@ -2508,6 +2607,11 @@ table { width: 100%; }
     align-items: flex-start;
     flex-direction: column;
   }
+  .aegis-chat-main-tools {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
   .aegis-chat-model {
     margin-left: 0;
   }
@@ -2525,6 +2629,10 @@ table { width: 100%; }
   }
   .aegis-chat-main-head .aegis-button {
     width: 100%;
+  }
+  .aegis-chat-model-select {
+    width: 100%;
+    max-width: none;
   }
   .aegis-chat-log {
     padding: 16px 12px;

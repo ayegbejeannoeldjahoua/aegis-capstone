@@ -1,10 +1,25 @@
 import React, { useEffect, useState } from "react";
-import { Activity, DollarSign, Gauge, Hash, RefreshCw, ShieldX, TrendingUp } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Activity, Gauge, Hash, RefreshCw, ShieldX } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client.js";
 import MetricCard from "../components/dashboard/MetricCard.jsx";
 import { chartTheme } from "../theme/chartTheme.js";
 import { useTheme } from "../theme/useTheme.js";
+
+const PIE_COLORS = [
+  "var(--chart-bar)",
+  "var(--chart-allow)",
+  "var(--chart-cost)",
+  "var(--chart-deny)",
+  "var(--blue)",
+  "var(--emerald)",
+  "var(--amber)",
+  "var(--violet)",
+];
+
+function currentMonthKey() {
+  return new Date().toISOString().slice(0, 7);
+}
 
 function available(value) {
   return value !== null && value !== undefined;
@@ -13,11 +28,6 @@ function available(value) {
 function compact(value) {
   if (!available(value)) return "No data";
   return Number(value).toLocaleString(undefined, { notation: "compact", maximumFractionDigits: 1 });
-}
-
-function money(value) {
-  if (!available(value)) return "No data";
-  return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
 }
 
 function pct(value) {
@@ -34,55 +44,9 @@ function Panel({ title, children }) {
   );
 }
 
-function BreakdownList({ title, rows, labelKey, valueKey, formatter, empty = "No records in this window" }) {
-  const max = Math.max(1, ...(rows || []).map((row) => Number(row[valueKey] || 0)));
-  return (
-    <div>
-      <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">{title}</h3>
-      <ul className="space-y-2">
-        {(rows || []).slice(0, 6).map((row) => (
-          <li key={row[labelKey]} className="text-sm">
-            <div className="flex justify-between gap-3 mb-1">
-              <span className="text-slate-300 truncate">{row[labelKey] || "unknown"}</span>
-              <span className="text-slate-400">{formatter(row[valueKey])}</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-slate-900/80">
-              <div className="h-1.5 rounded-full bg-sky-400" style={{ width: `${Math.max(6, (Number(row[valueKey] || 0) / max) * 100)}%` }} />
-            </div>
-          </li>
-        ))}
-        {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">{empty}</li>}
-      </ul>
-    </div>
-  );
-}
-
-function ActivityList({ title, rows, labelKey, empty = "No requests recorded in this window" }) {
-  const max = Math.max(1, ...(rows || []).map((row) => Number(row.requests || 0)));
-  return (
-    <div>
-      <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">{title}</h3>
-      <ul className="space-y-2">
-        {(rows || []).slice(0, 6).map((row) => (
-          <li key={row[labelKey]} className="text-sm">
-            <div className="flex justify-between gap-3 mb-1">
-              <span className="text-slate-300 truncate">{row[labelKey] || "unknown"}</span>
-              <span className="text-slate-400">{compact(row.requests)} requests</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-slate-900/80">
-              <div className="h-1.5 rounded-full bg-blue-400" style={{ width: `${Math.max(6, (Number(row.requests || 0) / max) * 100)}%` }} />
-            </div>
-          </li>
-        ))}
-        {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">{empty}</li>}
-      </ul>
-    </div>
-  );
-}
-
-function BudgetRow({ tenant_id, role_id, token_budget_per_day, budget_tokens, tokens_used, spent_tokens, remaining_tokens, utilization_pct }) {
+function BudgetRow({ tenant_id, role_id, monthly_token_budget, token_budget_per_day, tokens_used, spent_tokens, remaining_tokens, utilization_pct }) {
   const used = Number(tokens_used ?? spent_tokens ?? 0);
-  const budget = Number(token_budget_per_day ?? budget_tokens ?? 0);
+  const budget = Number(monthly_token_budget ?? token_budget_per_day ?? 0);
   const pctValue = available(utilization_pct) ? Number(utilization_pct) : (budget > 0 ? Math.min((used / budget) * 100, 100) : 0);
   const color = pctValue < 60 ? "bg-emerald-500" : pctValue < 85 ? "bg-amber-500" : "bg-rose-500";
   return (
@@ -118,7 +82,7 @@ function BudgetGovernance({ budgets, fin, budgetRows, budgetEmpty }) {
       </summary>
       <div className="border-t border-slate-700/60 px-5 pb-5 pt-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-sm">
-          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Current burn: <span className="text-slate-100">{compact(budgets.current_burn_tokens)}</span></div>
+          <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Month burn: <span className="text-slate-100">{compact(budgets.current_burn_tokens)}</span></div>
           <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Remaining: <span className="text-slate-100">{compact(budgets.remaining_budget_tokens)}</span></div>
           <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Refusals: <span className="text-slate-100">{compact(refusals)}</span></div>
         </div>
@@ -128,6 +92,82 @@ function BudgetGovernance({ budgets, fin, budgetRows, budgetEmpty }) {
         </div>
       </div>
     </details>
+  );
+}
+
+function TokenPie({ rows, labelKey }) {
+  const data = (rows || [])
+    .filter((row) => Number(row.tokens || 0) > 0)
+    .slice(0, 8)
+    .map((row) => ({ name: row[labelKey] || "unknown", value: Number(row.tokens || 0) }));
+  if (data.length === 0) {
+    return <div className="flex h-48 items-center justify-center text-sm text-slate-500">No token usage recorded</div>;
+  }
+  return (
+    <div className="h-48">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie data={data} dataKey="value" nameKey="name" innerRadius={42} outerRadius={72} paddingAngle={2}>
+            {data.map((entry, index) => <Cell key={entry.name} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
+          </Pie>
+          <Tooltip formatter={(value) => compact(value)} />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function TokenRows({ rows, labelKey }) {
+  return (
+    <ul className="space-y-2">
+      {(rows || []).slice(0, 10).map((row) => (
+        <li key={row[labelKey]} className="rounded-xl border border-slate-700/50 bg-slate-900/35 px-3 py-2 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-300 truncate">{row[labelKey] || "unknown"}</span>
+            <span className="text-slate-100 font-mono">{compact(row.tokens)} tokens</span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+            <span>{compact(row.requests || 0)} requests</span>
+            <span>Budget {available(row.budget_tokens) ? `${compact(row.budget_tokens)} tokens` : "not configured"}</span>
+            <span>Burn {pct(row.utilization_pct)}</span>
+          </div>
+        </li>
+      ))}
+      {(!rows || rows.length === 0) && <li className="text-sm text-slate-500">No records for this month</li>}
+    </ul>
+  );
+}
+
+function TokenDimension({ title, rows, labelKey }) {
+  return (
+    <details className="rounded-2xl border border-slate-700/60 bg-slate-800/70" open>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">{title}</h2>
+          <p className="mt-1 text-xs text-slate-500">{compact((rows || []).reduce((sum, row) => sum + Number(row.tokens || 0), 0))} tokens</p>
+        </div>
+        <span className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">Toggle</span>
+      </summary>
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 border-t border-slate-700/60 px-5 pb-5 pt-4">
+        <TokenPie rows={rows} labelKey={labelKey} />
+        <TokenRows rows={rows} labelKey={labelKey} />
+      </div>
+    </details>
+  );
+}
+
+function TokenBreakdown({ tokens }) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-200">Token Breakdown</h2>
+        <p className="mt-1 text-xs text-slate-500">Monthly usage and derived budgets from real chat/model activity.</p>
+      </div>
+      <TokenDimension title="Monthly tokens by tenant" rows={tokens.by_tenant} labelKey="tenant_id" />
+      <TokenDimension title="Monthly tokens by team" rows={tokens.by_team} labelKey="team_id" />
+      <TokenDimension title="Monthly tokens by role" rows={tokens.by_role} labelKey="role_id" />
+      <TokenDimension title="Monthly tokens by user" rows={tokens.by_user} labelKey="user_email" />
+    </section>
   );
 }
 
@@ -141,11 +181,11 @@ function RecentFinOpsEvents({ events }) {
               <th className="py-2 pr-4">Time</th>
               <th className="py-2 pr-4">Trace</th>
               <th className="py-2 pr-4">Tenant</th>
+              <th className="py-2 pr-4">Team</th>
               <th className="py-2 pr-4">Role</th>
               <th className="py-2 pr-4">Model</th>
-              <th className="py-2 pr-4">Input</th>
-              <th className="py-2 pr-4">Output</th>
-              <th className="py-2 pr-4">Cost</th>
+              <th className="py-2 pr-4">Tokens</th>
+              <th className="py-2 pr-4">Source</th>
               <th className="py-2">Budget</th>
             </tr>
           </thead>
@@ -155,16 +195,16 @@ function RecentFinOpsEvents({ events }) {
                 <td className="py-2 pr-4 text-xs text-slate-500">{row.timestamp ? new Date(row.timestamp).toLocaleTimeString() : "No data"}</td>
                 <td className="py-2 pr-4 font-mono text-xs text-slate-400 truncate max-w-[180px]">{row.trace_id}</td>
                 <td className="py-2 pr-4">{row.tenant_id}</td>
+                <td className="py-2 pr-4">{row.team_id || "unknown"}</td>
                 <td className="py-2 pr-4">{row.role}</td>
                 <td className="py-2 pr-4">{row.model || row.provider || "No data"}</td>
-                <td className="py-2 pr-4 text-slate-400">{compact(row.input_tokens)}</td>
-                <td className="py-2 pr-4 text-slate-400">{compact(row.output_tokens)}</td>
-                <td className="py-2 pr-4 text-slate-400">{money(row.estimated_cost)}</td>
+                <td className="py-2 pr-4 text-slate-400">{compact(row.total_tokens)}</td>
+                <td className="py-2 pr-4 text-slate-400">{row.token_source || "unmetered"}</td>
                 <td className="py-2 text-slate-400">{row.budget_status || "No data"}</td>
               </tr>
             ))}
             {(!events || events.length === 0) && (
-              <tr><td colSpan={9} className="py-4 text-slate-500">No FinOps events in this window</td></tr>
+              <tr><td colSpan={9} className="py-4 text-slate-500">No FinOps events in this month</td></tr>
             )}
           </tbody>
         </table>
@@ -177,38 +217,35 @@ export default function FinOps() {
   const { theme } = useTheme();
   const chart = chartTheme(theme);
   const [summary, setSummary] = useState(null);
+  const [month, setMonth] = useState(currentMonthKey());
   const [err, setErr] = useState("");
 
-  async function load() {
+  async function load(targetMonth = month) {
     setErr("");
     try {
-      const s = await api("/admin/finops/summary");
-      setSummary(s);
+      const qs = new URLSearchParams({ month: targetMonth });
+      const data = await api(`/admin/finops/summary?${qs.toString()}`);
+      setSummary(data);
     } catch (e) {
       setErr(String(e.message || e));
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(month); }, [month]);
 
   const fin = summary?.summary || {};
-  const breakdowns = summary?.breakdowns || {};
   const tokens = summary?.token_breakdown || {};
   const budgets = summary?.budget_governance || {};
   const budgetRows = budgets.daily_budgets || [];
-  const meteringNotice = fin.metering_notice || breakdowns.metering_notice;
-  const costEmpty = meteringNotice || "No cost records yet";
+  const meteringNotice = fin.metering_notice;
   const budgetEmpty = budgets.event_count
     ? "Budget checks recorded, but no token budgets are configured for scoped roles"
     : "No budget checks recorded yet";
-  const costByHour = (breakdowns.by_hour || []).map((row) => ({
-    hour: row.hour ? new Date(row.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown",
-    cost: Number(row.cost_usd || 0),
-  }));
   const tokenByHour = (tokens.by_hour || []).map((row) => ({
     hour: row.hour ? new Date(row.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown",
     tokens: Number(row.tokens || 0),
   }));
+  const sourceCounts = Object.entries(tokens.token_source_counts || {}).map(([source, count]) => `${source}: ${compact(count)}`).join(" · ");
 
   return (
     <div className="space-y-5">
@@ -218,12 +255,21 @@ export default function FinOps() {
           <h1 className="text-lg font-semibold text-slate-100">FinOps</h1>
           <div className="text-xs text-slate-500">
             {summary?.scope?.admin_scope === "tenant" ? `Tenant scope: ${summary.scope.tenant_id}` : "Platform scope"}
-            {summary?.hours ? ` · last ${summary.hours}h` : ""}
+            {summary?.period?.month ? ` · ${summary.period.month} month-to-date` : ""}
           </div>
         </div>
-        <button type="button" onClick={load} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 hover:bg-slate-700">
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            type="month"
+            value={month}
+            onChange={(event) => setMonth(event.target.value || currentMonthKey())}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200"
+            aria-label="FinOps month"
+          />
+          <button type="button" onClick={() => load(month)} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 hover:bg-slate-700">
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        </div>
       </div>
 
       <section className="space-y-3">
@@ -231,62 +277,24 @@ export default function FinOps() {
         <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
           {available(fin.requests_recorded) && <MetricCard title="Requests recorded" value={fin.requests_recorded} icon={Activity} color="blue" />}
           {available(fin.model_routed_requests) && <MetricCard title="Model routed" value={fin.model_routed_requests} icon={Gauge} color="violet" />}
-          {available(fin.tokens_today) && <MetricCard title="Tokens today" value={fin.tokens_today} icon={Hash} color="blue" />}
-          {available(fin.estimated_cost_today) && <MetricCard title="Estimated cost today" value={fin.estimated_cost_today} unit="USD" icon={DollarSign} color="emerald" />}
-          {available(fin.avg_cost_per_turn) && <MetricCard title="Avg cost / chat turn" value={fin.avg_cost_per_turn} unit="USD" icon={TrendingUp} color="blue" />}
+          {available(fin.tokens_month_to_date ?? fin.tokens_today) && <MetricCard title="Tokens month-to-date" value={fin.tokens_month_to_date ?? fin.tokens_today} icon={Hash} color="blue" />}
           {available(fin.budget_utilization_pct) && <MetricCard title="Budget utilization" value={fin.budget_utilization_pct} unit="%" icon={Gauge} color={fin.budget_utilization_pct > 85 ? "rose" : fin.budget_utilization_pct > 60 ? "amber" : "emerald"} />}
           {available(fin.budget_refusals) && <MetricCard title="Budget refusals" value={fin.budget_refusals} icon={ShieldX} color="amber" />}
-          {available(fin.projected_daily_spend) && <MetricCard title="Projected daily spend" value={fin.projected_daily_spend} unit="USD" icon={TrendingUp} color="violet" />}
+          {available(budgets.unmetered_count) && <MetricCard title="Unmetered requests" value={budgets.unmetered_count} icon={Activity} color="violet" />}
         </div>
+        {meteringNotice && (
+          <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-sm text-slate-400">
+            {meteringNotice}
+          </div>
+        )}
+        {sourceCounts && <div className="text-xs text-slate-500">{sourceCounts}</div>}
       </section>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <Panel title="Cost breakdown">
-          {meteringNotice && (
-            <div className="mb-4 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-sm text-slate-400">
-              {meteringNotice}
-            </div>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <BreakdownList title="Spend by tenant" rows={breakdowns.by_tenant} labelKey="tenant_id" valueKey="cost_usd" formatter={money} empty={costEmpty} />
-            <BreakdownList title="Spend by role" rows={breakdowns.by_role} labelKey="role_id" valueKey="cost_usd" formatter={money} empty={costEmpty} />
-            <BreakdownList title="Spend by model" rows={breakdowns.by_model} labelKey="model" valueKey="cost_usd" formatter={money} empty="No model cost attribution yet" />
-            <BreakdownList title="Spend by provider" rows={breakdowns.by_provider} labelKey="provider" valueKey="cost_usd" formatter={money} empty="No provider cost attribution yet" />
-          </div>
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-            <ActivityList title="Requests by provider" rows={breakdowns.requests_by_provider} labelKey="provider" />
-            <ActivityList title="Requests by model" rows={breakdowns.requests_by_model} labelKey="model" />
-          </div>
-          <div className="mt-5 h-52">
-            {costByHour.length ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={costByHour} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
-                  <XAxis dataKey="hour" stroke={chart.axis} fontSize={11} />
-                  <YAxis stroke={chart.axis} fontSize={11} />
-                  <Tooltip contentStyle={chart.tooltip} formatter={(value) => money(value)} />
-                  <Bar dataKey="cost" fill={chart.cost} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-slate-500">No hourly cost records yet</div>
-            )}
-          </div>
-        </Panel>
+      <BudgetGovernance budgets={budgets} fin={fin} budgetRows={budgetRows} budgetEmpty={budgetEmpty} />
 
-        <Panel title="Token breakdown">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5 text-sm">
-            <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Input: <span className="text-slate-100">{compact(tokens.input_tokens)}</span></div>
-            <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Output: <span className="text-slate-100">{compact(tokens.output_tokens)}</span></div>
-            <div className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">Total: <span className="text-slate-100">{compact(tokens.total_tokens)}</span></div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <BreakdownList title="Tokens by tenant" rows={tokens.by_tenant} labelKey="tenant_id" valueKey="tokens" formatter={compact} />
-            <BreakdownList title="Tokens by role" rows={tokens.by_role} labelKey="role_id" valueKey="tokens" formatter={compact} />
-            <BreakdownList title="Tokens by model" rows={tokens.by_model} labelKey="model" valueKey="tokens" formatter={compact} empty={meteringNotice || "No model token attribution yet"} />
-            <BreakdownList title="Tokens by provider" rows={tokens.by_provider} labelKey="provider" valueKey="tokens" formatter={compact} empty={meteringNotice || "No provider token attribution yet"} />
-          </div>
-          <div className="mt-5 h-52">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Panel title="Token activity by hour">
+          <div className="h-56">
             {tokenByHour.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={tokenByHour} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -302,9 +310,28 @@ export default function FinOps() {
             )}
           </div>
         </Panel>
+        <Panel title="Model and provider routing">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            {(tokens.by_provider || []).slice(0, 6).map((row) => (
+              <div key={row.provider} className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">
+                <span className="text-slate-500">Provider</span>
+                <div className="mt-1 flex justify-between gap-3"><span>{row.provider}</span><span>{compact(row.tokens)}</span></div>
+              </div>
+            ))}
+            {(tokens.by_model || []).slice(0, 6).map((row) => (
+              <div key={row.model} className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">
+                <span className="text-slate-500">Model</span>
+                <div className="mt-1 flex justify-between gap-3"><span className="truncate">{row.model}</span><span>{compact(row.tokens)}</span></div>
+              </div>
+            ))}
+            {(!tokens.by_provider || tokens.by_provider.length === 0) && (!tokens.by_model || tokens.by_model.length === 0) && (
+              <div className="text-sm text-slate-500">No model routing records for this month</div>
+            )}
+          </div>
+        </Panel>
       </div>
 
-      <BudgetGovernance budgets={budgets} fin={fin} budgetRows={budgetRows} budgetEmpty={budgetEmpty} />
+      <TokenBreakdown tokens={tokens} />
 
       <RecentFinOpsEvents events={summary?.recent_events || []} />
     </div>

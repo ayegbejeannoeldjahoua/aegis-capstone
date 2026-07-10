@@ -163,10 +163,12 @@ class ModelRegistry:
         max_tier = caps.get("max_model_risk_tier", "T3")
 
         ordered_ids: list[str] = []
+        strict_requested = bool(requested and self._selection().get("fail_visible_for_user_pinned_model", True))
         if requested:
             ordered_ids.append(requested)
-        ordered_ids.append(default_model or self._selection().get("default_model", settings.default_model))
-        ordered_ids.extend(self._fallback_ids())
+        if not strict_requested:
+            ordered_ids.append(default_model or self._selection().get("default_model", settings.default_model))
+            ordered_ids.extend(self._fallback_ids())
 
         seen: set[str] = set()
         candidates: list[ModelProfile] = []
@@ -309,11 +311,14 @@ class ModelClient:
         return ModelResult(model=profile.model_id, provider=profile.provider, content=data.get("message", {}).get("content", ""))
 
     async def _openai_compatible(self, profile, messages, temperature) -> ModelResult:
+        env_prefix = profile.provider.upper().replace("-", "_")
         if not profile.base_url:
-            raise RuntimeError(f"base_url not configured for {profile.provider}")
+            raise RuntimeError(f"{env_prefix}_BASE_URL not configured")
         headers = {"Content-Type": "application/json"}
         if profile.api_key:
             headers["Authorization"] = f"Bearer {profile.api_key}"
+        elif not profile.local:
+            raise RuntimeError(f"{env_prefix}_API_KEY not configured")
         payload = {
             "model": self._model_name(profile),
             "messages": [m.model_dump() for m in messages],

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS finops_events (
   request_id               TEXT,
   tenant_id                TEXT NOT NULL,
   user_email               TEXT,
+  team_id                  TEXT,
   role                     TEXT,
   action                   TEXT NOT NULL DEFAULT 'chat.turn',
   decision                 TEXT NOT NULL,
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS finops_events (
   input_tokens             INTEGER,
   output_tokens            INTEGER,
   total_tokens             INTEGER,
+  token_source             TEXT NOT NULL DEFAULT 'unmetered',
   estimated_cost_usd       NUMERIC(14, 6),
   budget_limit_usd         NUMERIC(14, 6),
   budget_remaining_usd     NUMERIC(14, 6),
@@ -33,11 +35,17 @@ CREATE TABLE IF NOT EXISTS finops_events (
   metadata                 JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
+ALTER TABLE finops_events ADD COLUMN IF NOT EXISTS team_id TEXT;
+ALTER TABLE finops_events ADD COLUMN IF NOT EXISTS token_source TEXT NOT NULL DEFAULT 'unmetered';
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_finops_events_trace_action
   ON finops_events(trace_id, action);
 
 CREATE INDEX IF NOT EXISTS idx_finops_events_tenant_time
   ON finops_events(tenant_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_finops_events_team_time
+  ON finops_events(team_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_finops_events_status_time
   ON finops_events(status, created_at DESC);

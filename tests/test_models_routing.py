@@ -16,6 +16,7 @@ def registry(tmp_path, monkeypatch):
         selection:
           default_model: ollama/llama3.1:8b
           fallbacks: [openai/gpt-4.1-mini]
+          fail_visible_for_user_pinned_model: false
         providers:
           ollama:
             type: ollama
@@ -80,6 +81,40 @@ def test_route_includes_fallbacks_in_order(registry):
     ids = [p.model_id for p in profiles]
     assert ids[0] == "ollama/llama3.1:8b"
     assert "openai/gpt-4.1-mini" in ids
+
+
+def test_strict_pinned_model_does_not_append_default_or_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://openai/v1")
+    monkeypatch.setenv("NVIDIA_BASE_URL", "http://nvidia/v1")
+    yaml_text = textwrap.dedent(
+        """
+        version: 1
+        selection:
+          default_model: openai/gpt-4.1
+          fallbacks: [openai/gpt-4.1]
+          fail_visible_for_user_pinned_model: true
+        providers:
+          openai:
+            type: openai_compatible
+            base_url_env: OPENAI_BASE_URL
+            region: AC1
+            local: false
+            models: [{id: openai/gpt-4.1, supports_tools: true}]
+          nvidia:
+            type: openai_compatible
+            base_url_env: NVIDIA_BASE_URL
+            region: AC1
+            local: false
+            models: [{id: nvidia/nemotron, supports_tools: true}]
+        """
+    )
+    path = tmp_path / "strict-registry.yaml"
+    path.write_text(yaml_text)
+    reg = ModelRegistry(path=str(path))
+
+    profiles = reg.route("nvidia/nemotron", allowed_region="AC1")
+
+    assert [profile.model_id for profile in profiles] == ["nvidia/nemotron"]
 
 
 def test_pinned_model_violating_region_raises(registry):

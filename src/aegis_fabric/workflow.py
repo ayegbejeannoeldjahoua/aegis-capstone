@@ -203,7 +203,7 @@ async def summarise_with_memory(
                      policy_version=values.policy_version,
                      values_version=values.values_version,
                      decision="allow", reason=None,
-                     payload={"memory_id": mem_id, "model": result.model})
+                     payload={"memory_id": mem_id, "model": result.model, "provider": result.provider})
         return {"trace_id": trace_id, "tenant_id": tenant, "role": subject.role,
                 "model": result.model, "provider": result.provider,
                 "summary_words": values.summary_words, "memory_id": mem_id,

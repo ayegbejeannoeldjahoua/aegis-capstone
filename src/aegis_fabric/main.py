@@ -135,8 +135,13 @@ class AskRequest(BaseModel):
     prompt: str
     skill_id: str = "summarise-with-memory"
     model: str | None = None
+    conversation_id: str | None = None
     summary_words: int | None = None
     inject_tool_output: bool = False
+
+
+class ConversationCreate(BaseModel):
+    title: str | None = None
 
 
 class RuntimeExecRequest(BaseModel):
@@ -206,6 +211,20 @@ async def ask(req: AskRequest, subject: Subject = Depends(get_subject)):
             operational_metrics.set_trace_id(result.get("trace_id"))
         snapshot = operational_metrics.snapshot(status="success")
         await run_db(operational_metrics.persist_snapshot, snapshot)
+        if isinstance(result, dict):
+            from . import chat_history
+
+            saved = await run_db(
+                chat_history.append_turn,
+                subject,
+                req.conversation_id,
+                req.prompt,
+                result,
+                snapshot,
+                req.model,
+            )
+            result["conversation_id"] = saved["conversation_id"]
+            result["conversation"] = saved["conversation"]
         return result
     except HTTPException as exc:
         snapshot = operational_metrics.error_snapshot(exc.status_code, exc.detail)
@@ -334,7 +353,55 @@ async def erase_memory(memory_id: str, subject: Subject = Depends(get_subject)):
 
 @app.get("/v1/models")
 def models(subject: Subject = Depends(get_subject)):
-    return registry.raw
+    return {
+        "default_model": registry.default_model_id(),
+        "models": registry.catalog(),
+        "registry": registry.raw,
+    }
+
+
+@app.get("/v1/chat/conversations")
+async def chat_conversations(
+    month: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    subject: Subject = Depends(get_subject),
+):
+    from . import chat_history
+
+    rows = await run_db(chat_history.list_conversations, subject, month_key=month, query=q, limit=limit)
+    return {"month": month or chat_history.current_month_key(), "conversations": rows}
+
+
+@app.post("/v1/chat/conversations")
+async def chat_conversation_create(req: ConversationCreate, subject: Subject = Depends(get_subject)):
+    from . import chat_history
+
+    return await run_db(chat_history.create_conversation, subject, title=req.title)
+
+
+@app.get("/v1/chat/conversations/{conversation_id}/messages")
+async def chat_conversation_messages(
+    conversation_id: str,
+    month: str | None = None,
+    subject: Subject = Depends(get_subject),
+):
+    from . import chat_history
+
+    messages = await run_db(chat_history.get_messages, subject, conversation_id, month_key=month)
+    if messages is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {"conversation_id": conversation_id, "month": month, "messages": messages}
+
+
+@app.delete("/v1/chat/conversations/{conversation_id}")
+async def chat_conversation_archive(conversation_id: str, subject: Subject = Depends(get_subject)):
+    from . import chat_history
+
+    ok = await run_db(chat_history.archive_conversation, subject, conversation_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {"ok": True}
 
 
 @app.get("/v1/skills")
@@ -355,11 +422,11 @@ def list_tools(subject: Subject = Depends(get_subject)):
 
 # --- Audit (tenant-scoped reads; chain verification is admin-only) ---------
 @app.get("/v1/audit/last")
-async def audit_last_endpoint(limit: int = 20, subject: Subject = Depends(get_subject)):
+async def audit_last_endpoint(limit: int = 20, month: str | None = None, subject: Subject = Depends(get_subject)):
     from .rbac import role_capabilities
 
     scope = (await run_db(role_capabilities, subject.tenant_id, subject.role)).get("audit_scope", "own")
-    return {"events": await run_db(audit_last, subject.tenant_id, scope, subject.email, limit)}
+    return {"events": await run_db(audit_last, subject.tenant_id, scope, subject.email, limit, month), "month": month}
 
 
 @app.get("/v1/audit/trace/{trace_id}")

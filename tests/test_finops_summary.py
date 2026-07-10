@@ -146,6 +146,7 @@ def test_finops_event_payload_records_budget_decision_and_model_routing():
     assert payload["status"] == "success"
     assert payload["provider"] == "ollama"
     assert payload["model"] == "llama3.1"
+    assert payload["token_source"] == "provider"
     assert payload["reached_model"] is True
     assert payload["budget_limit_tokens"] == 1000
     assert payload["budget_remaining_tokens"] == 880
