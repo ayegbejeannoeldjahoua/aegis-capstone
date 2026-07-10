@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { DollarSign, Gauge, Hash, RefreshCw, ShieldX, TrendingUp } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client.js";
+import InstrumentationGapsPanel from "../components/dashboard/InstrumentationGapsPanel.jsx";
 import MetricCard from "../components/dashboard/MetricCard.jsx";
 import { chartTheme } from "../theme/chartTheme.js";
 import { useTheme } from "../theme/useTheme.js";
@@ -122,7 +123,6 @@ export default function FinOps() {
   const { theme } = useTheme();
   const chart = chartTheme(theme);
   const [summary, setSummary] = useState(null);
-  const [budget, setBudget] = useState([]);
   const [err, setErr] = useState("");
 
   async function load() {
@@ -130,8 +130,6 @@ export default function FinOps() {
     try {
       const s = await api("/admin/finops/summary");
       setSummary(s);
-      const b = await api("/admin/finops/budget").catch(() => ({ teams: [] }));
-      setBudget(b.teams || []);
     } catch (e) {
       setErr(String(e.message || e));
     }
@@ -143,7 +141,13 @@ export default function FinOps() {
   const breakdowns = summary?.breakdowns || {};
   const tokens = summary?.token_breakdown || {};
   const budgets = summary?.budget_governance || {};
-  const budgetRows = (budgets.daily_budgets || []).length ? budgets.daily_budgets : budget;
+  const gaps = summary?.instrumentation_gaps || [];
+  const gapFor = (metric) => gaps.some((gap) => gap.metric === metric);
+  const budgetRows = budgets.daily_budgets || [];
+  const costEmpty = gapFor("spend_breakdowns") ? "Cost attribution is not instrumented yet" : "No cost records yet";
+  const budgetEmpty = gapFor("budget_utilization")
+    ? "Real token-budget burn is not instrumented yet"
+    : "No role budgets configured or no budgeted roles in scope";
   const costByHour = (breakdowns.by_hour || []).map((row) => ({
     hour: row.hour ? new Date(row.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown",
     cost: Number(row.cost_usd || 0),
@@ -169,6 +173,8 @@ export default function FinOps() {
         </button>
       </div>
 
+      <InstrumentationGapsPanel gaps={gaps} />
+
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-slate-200">Executive FinOps</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -184,8 +190,8 @@ export default function FinOps() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <Panel title="Cost breakdown">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <BreakdownList title="Spend by tenant" rows={breakdowns.by_tenant} labelKey="tenant_id" valueKey="cost_usd" formatter={money} empty="No cost records yet" />
-            <BreakdownList title="Spend by role" rows={breakdowns.by_role} labelKey="role_id" valueKey="cost_usd" formatter={money} empty="No cost records yet" />
+            <BreakdownList title="Spend by tenant" rows={breakdowns.by_tenant} labelKey="tenant_id" valueKey="cost_usd" formatter={money} empty={costEmpty} />
+            <BreakdownList title="Spend by role" rows={breakdowns.by_role} labelKey="role_id" valueKey="cost_usd" formatter={money} empty={costEmpty} />
             <BreakdownList title="Spend by model" rows={breakdowns.by_model} labelKey="model" valueKey="cost_usd" formatter={money} empty="No model cost attribution yet" />
             <BreakdownList title="Spend by provider" rows={breakdowns.by_provider} labelKey="provider" valueKey="cost_usd" formatter={money} empty="No provider cost attribution yet" />
           </div>
@@ -244,7 +250,7 @@ export default function FinOps() {
         </div>
         <div className="divide-y divide-slate-700/60">
           {(budgetRows || []).slice(0, 12).map((row) => <BudgetRow key={`${row.tenant_id}-${row.role_id}`} {...row} />)}
-          {(!budgetRows || budgetRows.length === 0) && <div className="py-4 text-sm text-slate-500">No role budgets configured</div>}
+          {(!budgetRows || budgetRows.length === 0) && <div className="py-4 text-sm text-slate-500">{budgetEmpty}</div>}
         </div>
       </Panel>
 

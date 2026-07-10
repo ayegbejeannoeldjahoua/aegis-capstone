@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { logout } from "./auth/keycloak.js";
+import { keycloak, logout } from "./auth/keycloak.js";
 import { fetchMe, getProfile } from "./api/client.js";
 import Home from "./Home.jsx";
 import Console from "./Console.jsx";
@@ -17,7 +17,9 @@ export default function App() {
     setView(nextView);
   }
 
+  const claims = keycloak.tokenParsed || {};
+
   if (view === "console") return <Console onHome={() => setView("home")} initialTab={consoleInitialTab} />;
-  if (view === "chat") return <Chat profile={profile} onHome={() => setView("home")} />;
-  return <Home profile={profile} onLogout={logout} go={go} />;
+  if (view === "chat") return <Chat profile={profile} claims={claims} onHome={() => setView("home")} onLogout={logout} />;
+  return <Home profile={profile} claims={claims} onLogout={logout} go={go} />;
 }

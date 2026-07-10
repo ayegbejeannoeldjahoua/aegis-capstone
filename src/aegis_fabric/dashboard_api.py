@@ -696,19 +696,20 @@ async def finops_summary(hours: int = Query(24, le=168),
                 spend_by_provider[model_info["provider"]] += cost
 
     budget_rows = []
-    for (tenant, role), budget in role_budgets.items():
-        if budget <= 0:
-            continue
-        used = int(tokens_by_role_key.get((tenant, role), 0))
-        utilization = _pct(used, budget) or 0.0
-        budget_rows.append({
-            "tenant_id": tenant,
-            "role_id": role,
-            "token_budget_per_day": budget,
-            "tokens_used": used,
-            "remaining_tokens": max(0, budget - used),
-            "utilization_pct": utilization,
-        })
+    if chat_table_available:
+        for (tenant, role), budget in role_budgets.items():
+            if budget <= 0:
+                continue
+            used = int(tokens_by_role_key.get((tenant, role), 0))
+            utilization = _pct(used, budget) or 0.0
+            budget_rows.append({
+                "tenant_id": tenant,
+                "role_id": role,
+                "token_budget_per_day": budget,
+                "tokens_used": used,
+                "remaining_tokens": max(0, budget - used),
+                "utilization_pct": utilization,
+            })
     total_budget = sum(r["token_budget_per_day"] for r in budget_rows)
     used_budget_tokens = sum(r["tokens_used"] for r in budget_rows)
     budget_utilization = _pct(used_budget_tokens, total_budget) if total_budget else None
@@ -728,7 +729,9 @@ async def finops_summary(hours: int = Query(24, le=168),
         _gap(gaps, "model_provider_breakdowns", "dashboard_stage_metrics is not available")
     elif not tokens_by_model:
         _gap(gaps, "model_provider_breakdowns", "no model stage telemetry recorded in this window")
-    if not budget_rows:
+    if not chat_table_available:
+        _gap(gaps, "budget_utilization", "dashboard_chat_metrics is required for real token-budget burn")
+    elif not budget_rows:
         _gap(gaps, "budget_utilization", "no token_budget_per_day values are configured for scoped roles")
 
     def _cost_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:

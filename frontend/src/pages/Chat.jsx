@@ -59,7 +59,7 @@ function securityFinding(finding) {
   };
 }
 
-export default function Chat({ profile, onHome }) {
+export default function Chat({ profile, claims = {}, onHome, onLogout }) {
   const [prompt, setPrompt] = useState("");
   const [log, setLog] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -90,7 +90,7 @@ export default function Chat({ profile, onHome }) {
 
   return (
     <div className="chat aegis-chat">
-      <ShellTopBar onBack={onHome} profile={profile} section="Chat / Governed Assistant" />
+      <ShellTopBar onBack={onHome} profile={profile} claims={claims} onLogout={onLogout} section="Chat / Governed Assistant" />
       <div className="aegis-chat-body">
         <aside className="aegis-chat-side" aria-label="Chat governance context">
           <div className="aegis-chat-side-head">

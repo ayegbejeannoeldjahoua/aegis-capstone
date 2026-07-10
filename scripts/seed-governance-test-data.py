@@ -25,8 +25,25 @@ if str(SRC) not in sys.path:
 
 BASELINE_FIXTURE = ROOT / "configs/fixtures/tenant_fixture.yaml"
 GOVERNANCE_FIXTURE = ROOT / "configs/fixtures/governance_test_fixture.yaml"
+VALUES_CASCADE_FIXTURE = ROOT / "configs/fixtures/values_cascade_seed.yaml"
 DEFAULT_LABEL = "capstone-demo-2026"
 FIXTURE_GENERATED_AT = "2026-06-26T00:00:00Z"
+
+VALUES_CASCADE_GROUP_SCOPES = {
+    "organization_values": "organization",
+    "tenant_department_values": "department",
+    "team_values": "team",
+    "role_values": "role",
+    "individual_values": "individual",
+}
+
+VALUES_DOCUMENT_SCOPE_ORDER = {
+    "organization": 0,
+    "department": 1,
+    "team": 2,
+    "role": 3,
+    "individual": 4,
+}
 
 NAMESPACES = [
     "analyst-notes",
@@ -556,6 +573,173 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def _tenant_domain(tenant_id: str | None) -> str | None:
+    if not tenant_id:
+        return None
+    for tenant in TENANTS:
+        if tenant["tenant_id"] == tenant_id:
+            return tenant["domain"]
+    return None
+
+
+def _values_doc_key(doc: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        doc.get("tenant_id") or "",
+        doc.get("scope_type") or "",
+        doc.get("scope_id") or "",
+    )
+
+
+def _values_seed_scope_id(entry: dict[str, Any], scope: str) -> str | None:
+    if scope in {"organization", "department"}:
+        return None
+    if scope == "team":
+        scope_id = entry.get("team_id") or entry.get("team")
+    elif scope == "role":
+        scope_id = entry.get("role")
+    elif scope == "individual":
+        scope_id = entry.get("user_email")
+    else:
+        raise ValueError(f"Unsupported values cascade scope: {scope}")
+    if not scope_id:
+        raise ValueError(f"Missing scope identifier for {entry.get('id', '<unknown>')}")
+    return str(scope_id)
+
+
+def _values_seed_author(entry: dict[str, Any], scope: str) -> str:
+    if entry.get("author_user"):
+        return str(entry["author_user"])
+    if scope == "individual" and entry.get("user_email"):
+        return str(entry["user_email"])
+    domain = _tenant_domain(entry.get("tenant_id"))
+    if domain:
+        return f"governance-auditor@{domain}"
+    return "platform-admin@aegis"
+
+
+def _format_values_seed_body(entry: dict[str, Any], scope: str, label: str) -> str:
+    lines = [
+        f"<!-- fixture_label: {label} -->",
+        f"# {entry['title']}",
+        "",
+        "Source fixture: configs/fixtures/values_cascade_seed.yaml",
+        f"Seed ID: {entry.get('id')}",
+        f"Scope: {scope}",
+    ]
+    if entry.get("tenant_id"):
+        lines.append(f"Tenant: {entry['tenant_id']}")
+    if entry.get("department"):
+        lines.append(f"Department: {entry['department']}")
+    if entry.get("team"):
+        lines.append(f"Team: {entry['team']}")
+    if entry.get("team_id"):
+        lines.append(f"Team ID: {entry['team_id']}")
+    if entry.get("role"):
+        lines.append(f"Role: {entry['role']}")
+    if entry.get("user_email"):
+        lines.append(f"User: {entry['user_email']}")
+    if entry.get("source_persona"):
+        lines.append(f"Source persona: {entry['source_persona']}")
+    if entry.get("priority") is not None:
+        lines.append(f"Cascade priority: {entry['priority']}")
+    lines.append("")
+
+    for value in entry.get("values", []):
+        lines.extend(
+            [
+                f"## {value.get('name', value.get('id', 'Unnamed value'))}",
+                f"- Value ID: {value.get('id')}",
+            ]
+        )
+        if value.get("department"):
+            lines.append(f"- Department: {value['department']}")
+        if value.get("constraint_type"):
+            lines.append(f"- Constraint type: {value['constraint_type']}")
+        if value.get("priority") is not None:
+            lines.append(f"- Priority: {value['priority']}")
+        if value.get("guidance"):
+            lines.append(f"- Guidance: {value['guidance']}")
+        if value.get("expected_runtime_effect"):
+            lines.append(f"- Expected runtime effect: {value['expected_runtime_effect']}")
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def values_cascade_documents(
+    path: Path = VALUES_CASCADE_FIXTURE,
+    label: str = DEFAULT_LABEL,
+) -> list[dict[str, Any]]:
+    seed = _load_yaml(path)
+    if not seed:
+        return []
+    if seed.get("version") != "values-cascade-v1":
+        raise ValueError(f"Unsupported values cascade fixture version in {path}")
+
+    docs: list[dict[str, Any]] = []
+    for group, default_scope in VALUES_CASCADE_GROUP_SCOPES.items():
+        for entry in seed.get(group, []):
+            if entry.get("status", "active") != "active":
+                continue
+            scope = str(entry.get("scope") or default_scope)
+            tenant_id = entry.get("tenant_id")
+            if scope != "organization" and not tenant_id:
+                raise ValueError(f"Missing tenant_id for {entry.get('id', '<unknown>')}")
+            docs.append(
+                {
+                    "scope_type": scope,
+                    "tenant_id": tenant_id,
+                    "scope_id": _values_seed_scope_id(entry, scope),
+                    "title": str(entry["title"]),
+                    "body_md": _format_values_seed_body(entry, scope, label),
+                    "author_user": _values_seed_author(entry, scope),
+                    "source_fixture_id": entry.get("id"),
+                }
+            )
+    return docs
+
+
+def _sort_values_documents(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        docs,
+        key=lambda doc: (
+            VALUES_DOCUMENT_SCOPE_ORDER.get(doc.get("scope_type"), 99),
+            doc.get("tenant_id") or "",
+            doc.get("scope_id") or "",
+            doc.get("title") or "",
+        ),
+    )
+
+
+def apply_values_cascade_seed(
+    data: dict[str, Any],
+    label: str = DEFAULT_LABEL,
+    path: Path = VALUES_CASCADE_FIXTURE,
+) -> dict[str, Any]:
+    seed_docs = values_cascade_documents(path, label)
+    if not seed_docs:
+        return data
+
+    merged = copy.deepcopy(data)
+    docs_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for doc in merged.get("values_documents", []):
+        docs_by_key[_values_doc_key(doc)] = copy.deepcopy(doc)
+
+    for doc in seed_docs:
+        key = _values_doc_key(doc)
+        if doc["scope_type"] == "organization" and key in docs_by_key:
+            continue
+        docs_by_key[key] = copy.deepcopy(doc)
+
+    merged["values_documents"] = _sort_values_documents(list(docs_by_key.values()))
+    meta = merged.setdefault("meta", {})
+    try:
+        meta["values_cascade_seed_fixture"] = str(path.relative_to(ROOT))
+    except ValueError:
+        meta["values_cascade_seed_fixture"] = str(path)
+    return merged
+
+
 def load_baseline(path: Path = BASELINE_FIXTURE) -> dict[str, Any]:
     return _load_yaml(path)
 
@@ -975,7 +1159,7 @@ def build_fixture(
             }
         )
 
-    return {
+    data = {
         "meta": {
             "label": label,
             "generated_by": "scripts/seed-governance-test-data.py",
@@ -995,11 +1179,12 @@ def build_fixture(
         "isas": isas,
         "turn_feedback": feedback,
     }
+    return apply_values_cascade_seed(data, label=label)
 
 
 def load_fixture(path: Path = GOVERNANCE_FIXTURE, label: str = DEFAULT_LABEL) -> dict[str, Any]:
     if path.exists():
-        return _load_yaml(path)
+        return apply_values_cascade_seed(_load_yaml(path), label=label)
     return build_fixture(label=label)
 
 

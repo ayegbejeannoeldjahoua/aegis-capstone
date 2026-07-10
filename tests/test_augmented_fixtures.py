@@ -182,7 +182,8 @@ def test_combined_memory_corpus_covers_namespaces_classifications_canaries_and_p
 
 
 def test_values_documents_cover_all_required_scopes():
-    augmented = _load_yaml(GOVERNANCE_FIXTURE)
+    seed = _load_seed_module()
+    augmented = seed.load_fixture(GOVERNANCE_FIXTURE)
     scopes = Counter(doc["scope_type"] for doc in augmented["values_documents"])
     team_count = sum(len(tenant["teams"]) for tenant in augmented["tenants"])
 
@@ -190,13 +191,28 @@ def test_values_documents_cover_all_required_scopes():
     assert scopes["organization"] == 1
     assert scopes["department"] == 9
     assert scopes["team"] == team_count
-    assert scopes["role"] == 9 * len(TEST_ROLE_IDS)
-    assert scopes["individual"] == len(augmented["users"])
+    assert scopes["role"] >= 9 * len(TEST_ROLE_IDS)
+    assert scopes["individual"] >= len(augmented["users"])
 
     role_scopes = {(doc["tenant_id"], doc["scope_id"]) for doc in augmented["values_documents"] if doc["scope_type"] == "role"}
     for tenant in augmented["tenants"]:
         for role_id in TEST_ROLE_IDS:
             assert (tenant["tenant_id"], role_id) in role_scopes
+
+    docs_by_scope = {
+        (doc.get("tenant_id"), doc["scope_type"], doc.get("scope_id")): doc
+        for doc in augmented["values_documents"]
+    }
+    assert docs_by_scope[("tenant-acmecp", "department", None)]["title"] == "AcmeCP Department Values"
+    assert docs_by_scope[("tenant-acmecp", "team", "research")]["title"] == "Supply Chain Reliability Team Values"
+    assert docs_by_scope[("tenant-acmecp", "role", "analyst")]["title"] == "Analyst Role Values"
+    assert docs_by_scope[("tenant-acmecp", "individual", "jane@acmecp.example")]["title"] == (
+        "Jane Analyst Individual Values"
+    )
+    assert "TD-ACME-SC-01" in docs_by_scope[("tenant-acmecp", "department", None)]["body_md"]
+    assert "TV-SC-REL-01" in docs_by_scope[("tenant-acmecp", "team", "research")]["body_md"]
+    assert "RV-ANALYST-01" in docs_by_scope[("tenant-acmecp", "role", "analyst")]["body_md"]
+    assert "IV-JANE-01" in docs_by_scope[("tenant-acmecp", "individual", "jane@acmecp.example")]["body_md"]
 
 
 def test_fixture_memory_keys_are_stable_for_repeat_seed_runs():
