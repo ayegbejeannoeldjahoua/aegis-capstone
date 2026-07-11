@@ -17,6 +17,7 @@ from .auth import AdminPrincipal, admin_principal
 from .db import get_conn, run_db
 from .audit import verify_chain
 from .operational_metrics import active_requests
+from .monthly_activity import load_monthly_activity
 
 try:
     import resource
@@ -117,6 +118,8 @@ async def dashboard_metrics(month: str | None = None, principal: AdminPrincipal 
             }
 
     raw = await run_db(_q)
+    canonical = await run_db(load_monthly_activity, principal, month_key=month)
+    raw["canonical"] = canonical
     return _build_dashboard_metrics(raw, principal)
 
 
@@ -241,6 +244,8 @@ def _build_dashboard_metrics(raw: dict, principal: AdminPrincipal) -> dict:
     stage_rows = raw["stage_rows"]
     isas = raw["isas"]
     roles = raw["roles"]
+    canonical_payload = raw.get("canonical") if isinstance(raw.get("canonical"), dict) else None
+    canonical_events = canonical_payload.get("events") if canonical_payload is not None else []
     chat_table_available = bool(raw["chat_table"])
     stage_table_available = bool(raw["stage_table"])
     gaps: list[dict[str, str]] = []
@@ -251,8 +256,16 @@ def _build_dashboard_metrics(raw: dict, principal: AdminPrincipal) -> dict:
         if r.get("action") == "response.return" and r.get("decision") == "allow"
     }
     fallback_request_count = len(response_traces) or len(audit_trace_ids)
-    request_count = len(chat_rows) if chat_table_available else fallback_request_count
-    successful_turns = (
+    canonical_request_count = len(canonical_events)
+    canonical_successful_turns = sum(
+        1 for r in canonical_events
+        if str(r.get("request_status") or "").lower() in {"success", "unmetered"}
+    )
+    request_count = (
+        canonical_request_count
+        if canonical_payload is not None else (len(chat_rows) if chat_table_available else fallback_request_count)
+    )
+    successful_turns = canonical_successful_turns if canonical_payload is not None else (
         sum(1 for r in chat_rows if r.get("status") == "success")
         if chat_table_available else len(response_traces)
     )
@@ -350,7 +363,8 @@ def _build_dashboard_metrics(raw: dict, principal: AdminPrincipal) -> dict:
         if chat_rows else len({r["trace_id"] for r in audit_rows if r.get("created_at") and r["created_at"] >= one_minute_ago})
     )
 
-    active_tenants = len(
+    canonical_active_tenants = len({r.get("tenant_id") for r in canonical_events if r.get("tenant_id")})
+    active_tenants = canonical_active_tenants if canonical_payload is not None else len(
         {
             r.get("tenant_id")
             for r in [*audit_rows, *chat_rows]
@@ -576,9 +590,11 @@ async def policy_resolve(req: ResolveReq,
 @router.get("/finops/summary")
 async def finops_summary(month: str | None = None,
                           hours: int | None = Query(None, le=168),
+                          tenant_id: str | None = None,
                           tenant: str | None = None,
                           team: str | None = None,
                           role: str | None = None,
+                          user_email: str | None = None,
                           user: str | None = None,
                           principal: AdminPrincipal = Depends(admin_principal)):
     """Token, model-routing, and budget governance for the selected month.
@@ -588,10 +604,10 @@ async def finops_summary(month: str | None = None,
     """
     _ = hours
     period_start, period_end, month_key, days_in_month = _month_bounds(month)
-    selected_tenant = tenant or ""
+    selected_tenant = tenant_id or tenant or ""
     selected_team = team or ""
     selected_role = role or ""
-    selected_user = user or ""
+    selected_user = user_email or user or ""
 
     def _q():
         with get_conn() as conn:
@@ -641,6 +657,9 @@ async def finops_summary(month: str | None = None,
                 ).fetchall()
             event_rows = []
             if finops_table:
+                def _finops_col(name: str, fallback: str) -> str:
+                    return name if name in finops_columns else f"{fallback} AS {name}"
+
                 team_expr = "team_id" if finops_has_team else "NULL::text AS team_id"
                 token_source_expr = (
                     "token_source"
@@ -653,14 +672,24 @@ async def finops_summary(month: str | None = None,
                     END AS token_source
                     """
                 )
+                estimated_cost_expr = _finops_col("estimated_cost_usd", "NULL::numeric")
+                budget_limit_usd_expr = _finops_col("budget_limit_usd", "NULL::numeric")
+                budget_remaining_usd_expr = _finops_col("budget_remaining_usd", "NULL::numeric")
+                budget_limit_tokens_expr = _finops_col("budget_limit_tokens", "NULL::integer")
+                budget_remaining_tokens_expr = _finops_col("budget_remaining_tokens", "NULL::integer")
+                budget_profile_expr = _finops_col("budget_profile", "'{}'::jsonb")
+                reached_model_expr = _finops_col("reached_model", "FALSE")
+                blocked_before_model_expr = _finops_col("blocked_before_model", "FALSE")
+                status_expr = _finops_col("status", "'unknown'::text")
+                metadata_expr = _finops_col("metadata", "'{}'::jsonb")
                 event_rows = conn.execute(
                     f"""
                     SELECT id, created_at, trace_id, request_id, tenant_id, user_email,
                            {team_expr}, role, action, decision, provider, model, input_tokens,
-                           output_tokens, total_tokens, {token_source_expr}, estimated_cost_usd, budget_limit_usd,
-                           budget_remaining_usd, budget_limit_tokens, budget_remaining_tokens,
-                           budget_profile, reason, reached_model, blocked_before_model,
-                           status, metadata
+                           output_tokens, total_tokens, {token_source_expr}, {estimated_cost_expr}, {budget_limit_usd_expr},
+                           {budget_remaining_usd_expr}, {budget_limit_tokens_expr}, {budget_remaining_tokens_expr},
+                           {budget_profile_expr}, reason, {reached_model_expr}, {blocked_before_model_expr},
+                           {status_expr}, {metadata_expr}
                     FROM finops_events
                     WHERE created_at >= %s AND created_at < %s {tenant_clause}
                     ORDER BY created_at DESC, id DESC
@@ -721,6 +750,17 @@ async def finops_summary(month: str | None = None,
             }
 
     raw = await run_db(_q)
+    canonical = await run_db(
+        load_monthly_activity,
+        principal,
+        month_key=month,
+        tenant_id=selected_tenant or None,
+        team=selected_team or None,
+        role=selected_role or None,
+        user_email=selected_user or None,
+    )
+    raw["canonical"] = canonical
+    raw["source_counts"] = canonical.get("source_counts", {})
     chat_rows = raw["chat_rows"]
     stage_rows = raw["stage_rows"]
     event_rows = raw.get("event_rows") or []
@@ -756,6 +796,18 @@ async def finops_summary(month: str | None = None,
     def _hour_key(value: Any) -> str:
         return value.replace(minute=0, second=0, microsecond=0).isoformat() if hasattr(value, "replace") else "unknown"
 
+    def _row_tokens(row: dict[str, Any]) -> int:
+        return int(row.get("total_tokens") if row.get("total_tokens") is not None else row.get("tokens_total") or 0)
+
+    def _row_status(row: dict[str, Any]) -> str:
+        return str(row.get("request_status") or row.get("status") or "unknown")
+
+    def _row_decision(row: dict[str, Any]) -> str:
+        return str(row.get("budget_decision") or row.get("decision") or "unknown")
+
+    def _row_reached_model(row: dict[str, Any]) -> bool:
+        return bool(row.get("reached_model") or row.get("model") or row.get("provider"))
+
     def _eventish_from_chat(row: dict[str, Any]) -> dict[str, Any]:
         model_info = model_by_trace.get(row.get("trace_id")) or {}
         status = row.get("status") or "unknown"
@@ -789,8 +841,13 @@ async def finops_summary(month: str | None = None,
             "metadata": {},
         }
 
-    activity_rows = event_rows if finops_table_available else [_eventish_from_chat(r) for r in chat_rows]
-    activity_available = bool(finops_table_available or chat_table_available)
+    canonical_payload = raw.get("canonical") if isinstance(raw.get("canonical"), dict) else None
+    canonical_events = canonical_payload.get("events") if canonical_payload is not None else None
+    activity_rows = (
+        canonical_events
+        if canonical_events is not None else (event_rows if finops_table_available else [_eventish_from_chat(r) for r in chat_rows])
+    )
+    activity_available = bool(activity_rows)
 
     tokens_by_tenant: Counter[str] = Counter()
     tokens_by_team: Counter[str] = Counter()
@@ -829,11 +886,13 @@ async def finops_summary(month: str | None = None,
         role = row.get("role") or row.get("role_id") or "unknown"
         model = row.get("model") or "unknown"
         provider = row.get("provider") or "unknown"
-        tokens = int(row.get("tokens_total") or 0)
+        tokens = _row_tokens(row)
         token_source = row.get("token_source") or ("estimated" if tokens else "unmetered")
         cost_value = row.get("estimated_cost_usd")
         cost = float(cost_value) if cost_value is not None else None
         hour = _hour_key(_row_time(row))
+        decision = _row_decision(row)
+        status = _row_status(row)
 
         requests_by_tenant[tenant] += 1
         requests_by_team[team] += 1
@@ -846,8 +905,8 @@ async def finops_summary(month: str | None = None,
             requests_by_model[model] += 1
         if row.get("provider"):
             requests_by_provider[provider] += 1
-        decision_counts[str(row.get("decision") or "unknown")] += 1
-        status_counts[str(row.get("status") or "unknown")] += 1
+        decision_counts[decision] += 1
+        status_counts[status] += 1
 
         tokens_by_tenant[tenant] += tokens
         tokens_by_team[team] += tokens
@@ -872,7 +931,7 @@ async def finops_summary(month: str | None = None,
             if row.get("provider"):
                 spend_by_provider[provider] += cost
 
-    total_tokens = sum(int(r.get("tokens_total") or 0) for r in activity_rows) if activity_available else None
+    total_tokens = sum(_row_tokens(r) for r in activity_rows) if activity_available else None
     input_tokens = sum(int(r.get("input_tokens") or r.get("prompt_tokens") or 0) for r in activity_rows) if activity_available else None
     output_tokens = sum(int(r.get("output_tokens") or r.get("completion_tokens") or 0) for r in activity_rows) if activity_available else None
     request_count = len(activity_rows) if activity_available else 0
@@ -885,7 +944,7 @@ async def finops_summary(month: str | None = None,
     total_cost = round(sum(cost_rows), 6) if cost_rows else None
     cost_available = bool(cost_rows)
     budget_refusals = (
-        sum(1 for r in activity_rows if r.get("status") == "refused_budget" or r.get("decision") == "deny")
+        sum(1 for r in activity_rows if _row_status(r) == "refused_budget" or _row_decision(r) in {"deny", "refused_budget"})
         if activity_available else raw["budget_denies"]
     )
     now = datetime.now(timezone.utc)
@@ -896,12 +955,12 @@ async def finops_summary(month: str | None = None,
     )
     projected_monthly_spend = round((total_cost or 0) / elapsed_month_fraction, 6) if cost_available else None
     avg_cost_per_turn = round(total_cost / successful_turns, 6) if cost_available and successful_turns else None
-    model_routed_requests = sum(1 for r in activity_rows if r.get("reached_model") or r.get("model") or r.get("provider"))
+    model_routed_requests = sum(1 for r in activity_rows if _row_reached_model(r))
     unmetered_requests = sum(
         1 for r in activity_rows
-        if (r.get("reached_model") or r.get("model") or r.get("provider"))
+        if _row_reached_model(r)
         and r.get("estimated_cost_usd") is None
-        and int(r.get("tokens_total") or 0) == 0
+        and _row_tokens(r) == 0
     )
     metering_notice = None
     if request_count and not cost_available:
@@ -959,6 +1018,13 @@ async def finops_summary(month: str | None = None,
 
     def _token_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:
         return [{key: k, "tokens": int(v)} for k, v in counter.most_common()]
+
+    def _token_request_rows(counter: Counter[str], request_counter: Counter[str], key: str) -> list[dict[str, Any]]:
+        labels = set(counter) | set(request_counter)
+        return [
+            {key: k, "tokens": int(counter.get(k, 0)), "requests": int(request_counter.get(k, 0))}
+            for k in sorted(labels, key=lambda item: (request_counter.get(item, 0), counter.get(item, 0), item), reverse=True)
+        ]
 
     def _request_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:
         return [{key: k, "requests": int(v)} for k, v in counter.most_common()]
@@ -1194,7 +1260,7 @@ async def finops_summary(month: str | None = None,
     notes: list[str] = []
     if not activity_rows:
         notes.append("No token usage recorded for this month yet.")
-    if activity_rows and not any(int(row.get("tokens_total") or 0) for row in activity_rows):
+    if activity_rows and not any(_row_tokens(row) for row in activity_rows):
         notes.append("Requests recorded, token metering unavailable or unmetered for this provider.")
     if not total_budget:
         notes.append("No token budgets are configured for the selected scope.")
@@ -1232,13 +1298,13 @@ async def finops_summary(month: str | None = None,
             "provider": row.get("provider"),
             "input_tokens": int(row.get("input_tokens") or row.get("prompt_tokens") or 0),
             "output_tokens": int(row.get("output_tokens") or row.get("completion_tokens") or 0),
-            "total_tokens": int(row.get("tokens_total") or 0),
+            "total_tokens": _row_tokens(row),
             "token_source": row.get("token_source") or "unmetered",
             "estimated_cost": float(row.get("estimated_cost_usd")) if row.get("estimated_cost_usd") is not None else None,
-            "budget_status": row.get("decision") or ("refused" if row.get("budget_refusal") else "ok"),
-            "status": row.get("status"),
+            "budget_status": _row_decision(row) if _row_decision(row) != "unknown" else ("refused" if row.get("budget_refusal") else "ok"),
+            "status": _row_status(row),
             "reason": row.get("reason") or row.get("refusal_reason"),
-            "reached_model": bool(row.get("reached_model")),
+            "reached_model": _row_reached_model(row),
         })
 
     return {
@@ -1266,6 +1332,7 @@ async def finops_summary(month: str | None = None,
             "metering_notice": metering_notice,
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source_counts": raw.get("source_counts", {}),
         "pie_charts": {
             "tenants": tenant_chart_rows,
             "tenant_teams": tenant_team_chart_rows,
@@ -1306,8 +1373,8 @@ async def finops_summary(month: str | None = None,
             "by_team": _token_budget_rows(tokens_by_team, requests_by_team, team_budget_monthly, "team_id"),
             "by_role": _token_budget_rows(tokens_by_role, requests_by_role, role_budget_monthly, "role_id"),
             "by_user": _token_budget_rows(tokens_by_user, requests_by_user, user_budget_monthly, "user_email"),
-            "by_model": _token_rows(tokens_by_model, "model"),
-            "by_provider": _token_rows(tokens_by_provider, "provider"),
+            "by_model": _token_request_rows(tokens_by_model, requests_by_model, "model"),
+            "by_provider": _token_request_rows(tokens_by_provider, requests_by_provider, "provider"),
             "by_hour": [{"hour": k, "tokens": int(v)} for k, v in sorted(tokens_by_hour.items())],
         },
         "budget_governance": {

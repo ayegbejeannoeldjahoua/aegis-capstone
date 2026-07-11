@@ -11,7 +11,7 @@ from aegis_fabric.operational_metrics import finops_event_payload
 
 @pytest.mark.asyncio
 async def test_finops_summary_does_not_fake_budget_burn_without_chat_metrics(monkeypatch):
-    async def fake_run_db(_fn):
+    async def fake_run_db(_fn, *args, **kwargs):
         return {
             "chat_table": False,
             "stage_table": False,
@@ -61,7 +61,7 @@ async def test_finops_summary_does_not_fake_budget_burn_without_chat_metrics(mon
 
 @pytest.mark.asyncio
 async def test_finops_summary_returns_empty_analytics_contract_without_rows(monkeypatch):
-    async def fake_run_db(_fn):
+    async def fake_run_db(_fn, *args, **kwargs):
         return {
             "period": {"month": "2026-07", "start": None, "end": None, "days_in_month": 31},
             "chat_table": True,
@@ -104,7 +104,7 @@ async def test_finops_summary_returns_empty_analytics_contract_without_rows(monk
 async def test_finops_summary_counts_unmetered_provider_activity_without_fake_cost(monkeypatch):
     now = datetime(2026, 7, 10, 18, 0, tzinfo=timezone.utc)
 
-    async def fake_run_db(_fn):
+    async def fake_run_db(_fn, *args, **kwargs):
         return {
             "chat_table": True,
             "stage_table": True,
@@ -162,6 +162,106 @@ async def test_finops_summary_counts_unmetered_provider_activity_without_fake_co
     assert result["breakdowns"]["requests_by_model"] == [{"model": "llama3.1", "requests": 1}]
     assert result["budget_governance"]["event_count"] == 1
     assert result["budget_governance"]["decision_counts"] == {"skipped": 1}
+
+
+@pytest.mark.asyncio
+async def test_finops_summary_uses_canonical_monthly_activity_over_partial_finops_events(monkeypatch):
+    now = datetime(2026, 7, 10, 18, 0, tzinfo=timezone.utc)
+
+    partial_finops_rows = [
+        {
+            "id": idx,
+            "created_at": now,
+            "trace_id": f"finops-trace-{idx}",
+            "request_id": None,
+            "tenant_id": "tenant-it",
+            "user_email": "priya@it.example",
+            "role": "platform-admin",
+            "action": "chat.turn",
+            "decision": "skipped",
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": None,
+            "budget_limit_usd": None,
+            "budget_remaining_usd": None,
+            "budget_limit_tokens": None,
+            "budget_remaining_tokens": None,
+            "budget_profile": {},
+            "reason": None,
+            "reached_model": True,
+            "blocked_before_model": False,
+            "status": "success",
+            "metadata": {},
+        }
+        for idx in range(4)
+    ]
+    canonical_events = [
+        {
+            "created_at": now,
+            "trace_id": f"canonical-trace-{idx}",
+            "tenant_id": "tenant-it" if idx < 40 else "tenant-acmecp",
+            "team_id": "platform",
+            "role": "platform-admin",
+            "user_email": "priya@it.example",
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "token_source": "unmetered",
+            "request_status": "success" if idx < 56 else "failed_provider",
+            "budget_decision": "skipped",
+            "reached_model": True,
+            "estimated_cost_usd": None,
+            "source_table": "dashboard_chat_metrics" if idx >= 4 else "finops_events",
+            "source_confidence": "high",
+        }
+        for idx in range(57)
+    ]
+
+    async def fake_run_db(fn, *args, **kwargs):
+        if fn is dashboard_api.load_monthly_activity:
+            return {
+                "period": {"month": "2026-07", "start": now, "end": now, "days_in_month": 31},
+                "events": canonical_events,
+                "roles": [],
+                "assignments": [],
+                "source_counts": {"finops_events": 4, "dashboard_chat_metrics": 57},
+            }
+        return {
+            "period": {"month": "2026-07", "start": now, "end": now, "days_in_month": 31},
+            "chat_table": True,
+            "stage_table": True,
+            "finops_table": True,
+            "chat_rows": [],
+            "stage_rows": [],
+            "event_rows": partial_finops_rows,
+            "action_rows": [],
+            "tenant_rows": [],
+            "budget_denies": 0,
+            "roles": [],
+            "assignments": [],
+        }
+
+    monkeypatch.setattr(dashboard_api, "run_db", fake_run_db)
+
+    result = await dashboard_api.finops_summary(
+        month="2026-07",
+        principal=AdminPrincipal(scope="platform", tenant_id=None, email="priya@it.example"),
+    )
+
+    assert result["summary"]["requests_recorded"] == 57
+    assert result["summary"]["model_routed_requests"] == 57
+    assert result["budget_governance"]["event_count"] == 57
+    assert result["budget_governance"]["unmetered_count"] == 57
+    assert result["budget_governance"]["decision_counts"] == {"skipped": 57}
+    assert result["budget_governance"]["status_counts"] == {"success": 56, "failed_provider": 1}
+    assert result["source_counts"] == {"finops_events": 4, "dashboard_chat_metrics": 57}
+    assert result["token_breakdown"]["by_provider"] == [{"provider": "openai", "tokens": 0, "requests": 57}]
+    assert result["breakdowns"]["requests_by_provider"] == [{"provider": "openai", "requests": 57}]
 
 
 def test_finops_event_payload_records_budget_decision_and_model_routing():

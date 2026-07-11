@@ -58,7 +58,7 @@ function BudgetRow({ tenant_id, role_id, monthly_token_budget, token_budget_per_
       <div className="h-1.5 rounded-full bg-slate-900/80">
         <div className={`h-1.5 rounded-full ${color} transition-all`} style={{ width: `${Math.min(pctValue, 100)}%` }} />
       </div>
-      <div className="mt-1 text-xs text-slate-500">{pct(pctValue)} used · {compact(remaining_tokens ?? 0)} remaining</div>
+      <div className="mt-1 text-xs text-slate-500">{pct(pctValue)} used / {compact(remaining_tokens ?? 0)} remaining</div>
     </div>
   );
 }
@@ -74,8 +74,8 @@ function BudgetGovernance({ budgets, fin, budgetRows, budgetEmpty }) {
         <div>
           <h2 className="text-sm font-semibold text-slate-200">Budget Governance</h2>
           <p className="mt-1 text-xs text-slate-500">
-            {compact(eventCount)} checks · {compact(routed)} routed · {compact(refusals)} refusals
-            {unmetered ? ` · ${compact(unmetered)} unmetered` : ""}
+            {compact(eventCount)} checks / {compact(routed)} routed / {compact(refusals)} refusals
+            {unmetered ? ` / ${compact(unmetered)} unmetered` : ""}
           </p>
         </div>
         <span className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">Expand</span>
@@ -286,7 +286,14 @@ export default function FinOps() {
     try {
       const qs = new URLSearchParams({ month: targetMonth });
       Object.entries(targetFilters || {}).forEach(([key, value]) => {
-        if (value) qs.set(key, value);
+        if (!value) return;
+        if (key === "tenant") {
+          qs.set("tenant_id", value);
+        } else if (key === "user") {
+          qs.set("user_email", value);
+        } else {
+          qs.set(key, value);
+        }
       });
       const data = await api(`/admin/finops/summary?${qs.toString()}`);
       setSummary(data);
@@ -350,7 +357,7 @@ export default function FinOps() {
     hour: row.hour ? new Date(row.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown",
     tokens: Number(row.tokens || 0),
   }));
-  const sourceCounts = Object.entries(tokens.token_source_counts || {}).map(([source, count]) => `${source}: ${compact(count)}`).join(" · ");
+  const sourceCounts = Object.entries(tokens.token_source_counts || {}).map(([source, count]) => `${source}: ${compact(count)}`).join(" / ");
 
   return (
     <div className="space-y-5">
@@ -360,7 +367,7 @@ export default function FinOps() {
           <h1 className="text-lg font-semibold text-slate-100">FinOps</h1>
           <div className="text-xs text-slate-500">
             {summary?.scope?.admin_scope === "tenant" ? `Tenant scope: ${summary.scope.tenant_id}` : "Platform scope"}
-            {summary?.period?.month ? ` · ${summary.period.month} month-to-date` : ""}
+            {summary?.period?.month ? ` / ${summary.period.month} month-to-date` : ""}
           </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -444,13 +451,15 @@ export default function FinOps() {
             {(tokens.by_provider || []).slice(0, 6).map((row) => (
               <div key={row.provider} className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">
                 <span className="text-slate-500">Provider</span>
-                <div className="mt-1 flex justify-between gap-3"><span>{row.provider}</span><span>{compact(row.tokens)}</span></div>
+                <div className="mt-1 flex justify-between gap-3"><span>{row.provider}</span><span>{compact(row.requests || 0)} requests</span></div>
+                <div className="mt-1 text-xs text-slate-500">{compact(row.tokens)} tokens</div>
               </div>
             ))}
             {(tokens.by_model || []).slice(0, 6).map((row) => (
               <div key={row.model} className="rounded-xl bg-slate-900/40 border border-slate-700/50 px-3 py-2 text-slate-300">
                 <span className="text-slate-500">Model</span>
-                <div className="mt-1 flex justify-between gap-3"><span className="truncate">{row.model}</span><span>{compact(row.tokens)}</span></div>
+                <div className="mt-1 flex justify-between gap-3"><span className="truncate">{row.model}</span><span>{compact(row.requests || 0)} requests</span></div>
+                <div className="mt-1 text-xs text-slate-500">{compact(row.tokens)} tokens</div>
               </div>
             ))}
             {(!tokens.by_provider || tokens.by_provider.length === 0) && (!tokens.by_model || tokens.by_model.length === 0) && (
