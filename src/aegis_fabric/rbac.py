@@ -136,7 +136,7 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
         "max_model_risk_tier": "T2", "admin_scope": "none", "audit_scope": "own",
         "pii_scope": "masked", "allowed_model_purposes": ["chat", "embedding"],
         "egress_domains": ["wikipedia.org", "example.com"], "max_output_tokens": 2048,
-        "max_tool_calls_per_request": 6,
+        "max_tool_calls_per_request": 6, "token_budget_per_day": 10_000,
     }},
     "lead": {"display_name": "Lead", "capabilities": {
         "skills": ["assistant", "summarise-with-memory", "research-brief", "qa-over-docs", "meeting-notes"],
@@ -152,7 +152,7 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
         "max_tool_calls_per_request": 8, "can_export": True, "max_export_classification": "internal",
         "max_retention_class": "long", "allowed_retention_classes": ["ephemeral", "standard", "long"],
         "runtime_max_seconds": 60, "runtime_memory_mb": 512, "runtime_network": "none",
-        "allowed_runtime_languages": ["python"], "can_approve": "team",
+        "allowed_runtime_languages": ["python"], "can_approve": "team", "token_budget_per_day": 20_000,
     }},
     "viewer": {"display_name": "Viewer", "capabilities": {
         "skills": ["assistant", "qa-over-docs", "kb-answer"], "tools": ["kb_search", "vector_recall", "doc_search", "calculator"],
@@ -161,7 +161,7 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
         "max_read_classification": "internal", "max_write_classification": "public",
         "max_model_risk_tier": "T2", "admin_scope": "none", "audit_scope": "own",  # T2: the local 8B model computes to T2; T1 left no routable model
         "pii_scope": "none", "allowed_model_purposes": ["chat"], "max_output_tokens": 512,
-        "max_tool_calls_per_request": 2,
+        "max_tool_calls_per_request": 2, "token_budget_per_day": 4_000,
     }},
     "tenant-admin": {"display_name": "Tenant Admin", "capabilities": {
         "skills": ["assistant", "summarise-with-memory", "research-brief", "qa-over-docs", "meeting-notes", "access-review"],
@@ -179,7 +179,7 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
         "max_retention_class": "legal-hold",
         "allowed_retention_classes": ["ephemeral", "standard", "long", "legal-hold"],
         "can_erase": True, "can_manage_teams": True, "can_approve": "tenant",
-        "dual_control_actions": ["governance.edit"],
+        "dual_control_actions": ["governance.edit"], "token_budget_per_day": 24_000,
     }},
     "platform-admin": {"display_name": "Platform Admin", "capabilities": {
         "skills": ["assistant", "summarise-with-memory", "research-brief", "qa-over-docs", "meeting-notes",
@@ -204,6 +204,7 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
         "can_view_traces": True, "can_manage_signing_keys": True, "can_impersonate": "read",
         "can_approve": "platform", "dual_control_actions": ["tenant.delete", "secret.rotate"],
         "runtime_max_seconds": 120, "runtime_memory_mb": 1024, "allowed_runtime_languages": ["python", "bash"],
+        "token_budget_per_day": 40_000,
     }},
 }
 

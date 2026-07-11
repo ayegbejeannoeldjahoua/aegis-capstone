@@ -41,6 +41,7 @@ role_templates:
     pii_scope: masked
     egress_domains: []
     max_output_tokens: 2048
+    token_budget_per_day: 7000
     runtime_exec: false
 - template_id: analyst-low-budget
   display_name: Analyst - Low Budget [test]
@@ -103,6 +104,7 @@ role_templates:
     audit_scope: tenant
     pii_scope: none
     max_output_tokens: 512
+    token_budget_per_day: 6000
     runtime_exec: false
     can_view_traces: true
     can_manage_users: false
@@ -155,6 +157,7 @@ role_templates:
     - python
     runtime_network: none
     can_approve: tenant
+    token_budget_per_day: 10000
     can_manage_users: false
     can_manage_roles: false
     can_edit_governance: false
@@ -205,6 +208,7 @@ role_templates:
     runtime_network: none
     can_approve: team
     can_export: false
+    token_budget_per_day: 4000
 - template_id: runtime-denied-engineer
   display_name: Runtime Denied Engineer [test]
   base_template: viewer
@@ -233,6 +237,7 @@ role_templates:
     runtime_exec: false
     allowed_runtime_languages: []
     runtime_network: none
+    token_budget_per_day: 6000
 - template_id: runtime-python-engineer
   display_name: Runtime Python Engineer [test]
   base_template: lead
@@ -280,6 +285,7 @@ role_templates:
     can_approve: team
     runtime_max_seconds: 60
     runtime_memory_mb: 512
+    token_budget_per_day: 16000
 tenants:
 - tenant_id: tenant-acmecp
   display_name: Acme Corp Research Dept

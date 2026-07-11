@@ -18,6 +18,7 @@ from .db import get_conn, run_db
 from .audit import verify_chain
 from .operational_metrics import active_requests
 from .monthly_activity import load_monthly_activity
+from .token_budgets import build_user_budget_hierarchy
 
 try:
     import resource
@@ -970,23 +971,37 @@ async def finops_summary(month: str | None = None,
             else "Requests recorded, cost metering unavailable for this provider."
         )
 
+    assignments = raw.get("assignments") or []
+    budget_hierarchy = build_user_budget_hierarchy(
+        assignments,
+        raw["roles"],
+        days_in_month=days_in_month,
+    )
+    user_budget_monthly: dict[str, int] = budget_hierarchy["user_budget_monthly"]
+    user_budget_monthly_by_key: Counter[tuple[str, str, str, str]] = budget_hierarchy["user_budget_monthly_by_key"]
+    team_budget_monthly: Counter[str] = budget_hierarchy["team_budget_monthly"]
+    tenant_team_budget_monthly: Counter[tuple[str, str]] = budget_hierarchy["tenant_team_budget_monthly"]
+    tenant_budget_monthly: Counter[str] = budget_hierarchy["tenant_budget_monthly"]
+    role_budget_monthly: Counter[str] = budget_hierarchy["role_budget_monthly"]
+    tenant_team_role_budget_monthly: Counter[tuple[str, str, str]] = budget_hierarchy["tenant_team_role_budget_monthly"]
+
     budget_rows = []
-    if activity_available:
-        for (tenant, role), daily_budget in role_budgets.items():
-            if daily_budget <= 0:
-                continue
-            budget = daily_budget * days_in_month
-            used = int(tokens_by_role_key.get((tenant, role), 0))
-            utilization = _pct(used, budget) or 0.0
-            budget_rows.append({
-                "tenant_id": tenant,
-                "role_id": role,
-                "token_budget_per_day": daily_budget,
-                "monthly_token_budget": budget,
-                "tokens_used": used,
-                "remaining_tokens": max(0, budget - used),
-                "utilization_pct": utilization,
-            })
+    for (tenant, team, role), budget in sorted(tenant_team_role_budget_monthly.items()):
+        if budget <= 0:
+            continue
+        used = int(tokens_by_tenant_team_role.get((tenant, team, role), 0))
+        utilization = _pct(used, budget) or 0.0
+        budget_rows.append({
+            "tenant_id": tenant,
+            "team_id": team,
+            "role_id": role,
+            "token_budget_per_day": max(1, round(budget / max(days_in_month, 1))),
+            "monthly_token_budget": budget,
+            "tokens_used": used,
+            "remaining_tokens": max(0, budget - used),
+            "utilization_pct": utilization,
+            "budget_source": "sum_of_user_monthly_budgets",
+        })
     total_budget = sum(r["monthly_token_budget"] for r in budget_rows)
     used_budget_tokens = sum(r["tokens_used"] for r in budget_rows)
     budget_utilization = _pct(used_budget_tokens, total_budget) if total_budget else None
@@ -1011,7 +1026,7 @@ async def finops_summary(month: str | None = None,
     if not activity_available:
         _gap(gaps, "budget_utilization", "chat or FinOps event metrics are required for real token-budget burn")
     elif not budget_rows:
-        _gap(gaps, "budget_utilization", "no token_budget_per_day values are configured for scoped roles")
+        _gap(gaps, "budget_utilization", "no assigned users are available for user-level token budgets")
 
     def _cost_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:
         return [{key: k, "cost_usd": round(v, 6)} for k, v in counter.most_common() if v or cost_available]
@@ -1028,35 +1043,6 @@ async def finops_summary(month: str | None = None,
 
     def _request_rows(counter: Counter[str], key: str) -> list[dict[str, Any]]:
         return [{key: k, "requests": int(v)} for k, v in counter.most_common()]
-
-    user_budget_monthly: dict[str, int] = {}
-    user_budget_monthly_by_key: Counter[tuple[str, str, str, str]] = Counter()
-    team_budget_monthly: Counter[str] = Counter()
-    tenant_team_budget_monthly: Counter[tuple[str, str]] = Counter()
-    tenant_budget_monthly: Counter[str] = Counter()
-    role_budget_monthly: Counter[str] = Counter()
-    tenant_team_role_budget_monthly: Counter[tuple[str, str, str]] = Counter()
-    assignments = raw.get("assignments") or []
-    for assignment in assignments:
-        tenant = assignment.get("tenant_id")
-        team = assignment.get("team_id") or "unknown"
-        email = assignment.get("user_email") or "unknown"
-        role = assignment.get("role_id") or "unknown"
-        daily_budget = role_budgets.get((tenant, role), 0)
-        monthly_budget = daily_budget * days_in_month if daily_budget else 0
-        if monthly_budget:
-            user_budget_monthly[email] = monthly_budget
-            user_budget_monthly_by_key[(tenant, team, role, email)] += monthly_budget
-            team_budget_monthly[team] += monthly_budget
-            tenant_team_budget_monthly[(tenant, team)] += monthly_budget
-            tenant_budget_monthly[tenant] += monthly_budget
-            role_budget_monthly[role] += monthly_budget
-            tenant_team_role_budget_monthly[(tenant, team, role)] += monthly_budget
-    for (tenant, role), daily_budget in role_budgets.items():
-        if daily_budget and not any(a.get("tenant_id") == tenant and a.get("role_id") == role for a in assignments):
-            monthly_budget = daily_budget * days_in_month
-            tenant_budget_monthly[tenant] += monthly_budget
-            role_budget_monthly[role] += monthly_budget
 
     def _token_budget_rows(
         counter: Counter[str],
@@ -1076,7 +1062,7 @@ async def finops_summary(month: str | None = None,
                 "requests": int(requests.get(label, 0)),
                 "budget_tokens": budget or None,
                 "utilization_pct": _pct(tokens, budget) if budget else None,
-                "budget_source": "derived_from_role_daily_budget" if budget else "not_configured",
+                "budget_source": "sum_of_user_monthly_budgets" if budget else "not_configured",
             })
         return rows
 
@@ -1404,11 +1390,12 @@ async def finops_summary(month: str | None = None,
 
 @router.get("/finops/budget")
 async def finops_budget(principal: AdminPrincipal = Depends(admin_principal)):
-    """Per-role token budget vs. today's real token usage."""
+    """Tenant/team/role user-derived budget vs. today's real token usage."""
     def _q():
         with get_conn() as conn:
             scoped = principal.scope != "platform" and principal.tenant_id
             tenant_clause = " AND tenant_id=%s" if scoped else ""
+            tenant_params = [principal.tenant_id] if scoped else []
             roles = conn.execute(
                 f"""
                 SELECT tenant_id, role_id, capabilities
@@ -1416,7 +1403,16 @@ async def finops_budget(principal: AdminPrincipal = Depends(admin_principal)):
                 WHERE 1=1 {tenant_clause}
                 ORDER BY tenant_id, role_id
                 """,
-                [principal.tenant_id] if scoped else [],
+                tenant_params,
+            ).fetchall()
+            assignments = conn.execute(
+                f"""
+                SELECT tenant_id, lower(user_email) AS user_email, team_id, role_id
+                FROM user_assignments
+                WHERE 1=1 {tenant_clause}
+                ORDER BY tenant_id, team_id, role_id, user_email
+                """,
+                tenant_params,
             ).fetchall()
             chat_table = bool(conn.execute("SELECT to_regclass('public.dashboard_chat_metrics') AS t").fetchone()["t"])
             usage_rows = []
@@ -1428,30 +1424,32 @@ async def finops_budget(principal: AdminPrincipal = Depends(admin_principal)):
                     WHERE started_at >= date_trunc('day', now()) {tenant_clause}
                     GROUP BY tenant_id, role_id
                     """,
-                    [principal.tenant_id] if scoped else [],
+                    tenant_params,
                 ).fetchall()
-            return [dict(r) for r in roles], [dict(r) for r in usage_rows], chat_table
+            return [dict(r) for r in roles], [dict(r) for r in assignments], [dict(r) for r in usage_rows], chat_table
 
-    roles, usage_rows, chat_table = await run_db(_q)
+    roles, assignments, usage_rows, chat_table = await run_db(_q)
+    _, _, _, days_in_month = _month_bounds(None)
+    hierarchy = build_user_budget_hierarchy(assignments, roles, days_in_month=days_in_month)
     usage_map = {(r["tenant_id"], r["role_id"]): int(r["tokens"] or 0) for r in usage_rows}
     out = []
-    for role in roles:
-        caps = _json_dict(role.get("capabilities"))
-        budget = int(caps.get("token_budget_per_day") or 0)
+    for (tenant, team, role), budget in sorted(hierarchy["tenant_team_role_budget_monthly"].items()):
         if budget <= 0:
             continue
-        used = usage_map.get((role["tenant_id"], role["role_id"]), 0) if chat_table else None
+        used = usage_map.get((tenant, role), 0) if chat_table else None
         pct = _pct(used or 0, budget) if used is not None else None
         out.append({
-            "team": f"{role['tenant_id']}/{role['role_id']}",
-            "tenant_id": role["tenant_id"],
-            "role_id": role["role_id"],
+            "team": f"{tenant}/{team}/{role}",
+            "tenant_id": tenant,
+            "team_id": team,
+            "role_id": role,
             "budget_tokens": budget,
             "spent_tokens": used,
             "remaining_tokens": max(0, budget - used) if used is not None else None,
             "utilization_pct": pct,
             "budget_usd": None,
             "spent_usd": None,
+            "budget_source": "sum_of_user_monthly_budgets",
         })
     return {"teams": out}
 

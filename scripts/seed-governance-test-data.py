@@ -178,7 +178,7 @@ ROLE_DELTAS: dict[str, dict[str, Any]] = {
         "base": "analyst",
         "display_name": "Analyst - No Egress [test]",
         "purpose": "S9 egress allowlist denial.",
-        "delta": {"egress_domains": []},
+        "delta": {"egress_domains": [], "token_budget_per_day": 7_000},
     },
     "analyst-low-budget": {
         "base": "analyst",
@@ -192,6 +192,7 @@ ROLE_DELTAS: dict[str, dict[str, Any]] = {
         "purpose": "S13 tenant audit browsing without mutation rights.",
         "delta": {
             "audit_scope": "tenant",
+            "token_budget_per_day": 6_000,
             "can_view_traces": True,
             "can_manage_users": False,
             "can_manage_roles": False,
@@ -207,6 +208,7 @@ ROLE_DELTAS: dict[str, dict[str, Any]] = {
         "purpose": "S15 approval workflows without tenant-admin rights.",
         "delta": {
             "can_approve": "tenant",
+            "token_budget_per_day": 10_000,
             "can_manage_users": False,
             "can_manage_roles": False,
             "can_edit_governance": False,
@@ -221,6 +223,7 @@ ROLE_DELTAS: dict[str, dict[str, Any]] = {
             "max_read_classification": "restricted",
             "pii_scope": "full",
             "can_export": False,
+            "token_budget_per_day": 4_000,
         },
     },
     "runtime-denied-engineer": {
@@ -232,6 +235,7 @@ ROLE_DELTAS: dict[str, dict[str, Any]] = {
             "tools": ["kb_search", "vector_recall", "doc_search", "calculator"],
             "allowed_runtime_languages": [],
             "runtime_network": "none",
+            "token_budget_per_day": 6_000,
         },
     },
     "runtime-python-engineer": {
@@ -244,6 +248,7 @@ ROLE_DELTAS: dict[str, dict[str, Any]] = {
             "allowed_runtime_languages": ["python"],
             "runtime_max_seconds": 60,
             "runtime_memory_mb": 512,
+            "token_budget_per_day": 16_000,
         },
     },
 }
@@ -260,6 +265,7 @@ FALLBACK_CAPS: dict[str, dict[str, Any]] = {
         "audit_scope": "own",
         "pii_scope": "none",
         "max_output_tokens": 512,
+        "token_budget_per_day": 4_000,
         "runtime_exec": False,
     },
     "analyst": {
@@ -283,6 +289,7 @@ FALLBACK_CAPS: dict[str, dict[str, Any]] = {
         "pii_scope": "masked",
         "egress_domains": ["wikipedia.org", "example.com"],
         "max_output_tokens": 2048,
+        "token_budget_per_day": 10_000,
         "runtime_exec": False,
     },
     "lead": {
@@ -315,6 +322,7 @@ FALLBACK_CAPS: dict[str, dict[str, Any]] = {
         "pii_scope": "full",
         "egress_domains": ["wikipedia.org", "example.com"],
         "max_output_tokens": 8192,
+        "token_budget_per_day": 20_000,
         "runtime_exec": True,
         "allowed_runtime_languages": ["python"],
         "runtime_network": "none",

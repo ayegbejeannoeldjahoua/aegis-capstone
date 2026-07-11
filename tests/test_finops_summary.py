@@ -7,6 +7,7 @@ import pytest
 from aegis_fabric import dashboard_api
 from aegis_fabric.auth import AdminPrincipal
 from aegis_fabric.operational_metrics import finops_event_payload
+from aegis_fabric.token_budgets import build_user_budget_hierarchy
 
 
 @pytest.mark.asyncio
@@ -97,6 +98,84 @@ async def test_finops_summary_returns_empty_analytics_contract_without_rows(monk
     assert result["notes"] == [
         "No token usage recorded for this month yet.",
         "No token budgets are configured for the selected scope.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_finops_summary_budget_totals_are_derived_from_assigned_users(monkeypatch):
+    now = datetime(2026, 7, 10, 18, 0, tzinfo=timezone.utc)
+    roles = [
+        {"tenant_id": "tenant-it", "role_id": "platform-admin", "capabilities": {"token_budget_per_day": 40_000}},
+        {"tenant_id": "tenant-it", "role_id": "lead", "capabilities": {"token_budget_per_day": 20_000}},
+        {"tenant_id": "tenant-it", "role_id": "tenant-admin", "capabilities": {"token_budget_per_day": 24_000}},
+        {"tenant_id": "tenant-acmecp", "role_id": "analyst", "capabilities": {"token_budget_per_day": 10_000}},
+    ]
+    assignments = [
+        {"tenant_id": "tenant-it", "team_id": "platform", "role_id": "platform-admin", "user_email": "priya@it.example"},
+        {"tenant_id": "tenant-it", "team_id": "platform", "role_id": "lead", "user_email": "taylor@it.example"},
+        {"tenant_id": "tenant-acmecp", "team_id": "research", "role_id": "analyst", "user_email": "jane@acmecp.example"},
+    ]
+    hierarchy = build_user_budget_hierarchy(assignments, roles, days_in_month=31)
+
+    async def fake_run_db(fn, *args, **kwargs):
+        if fn is dashboard_api.load_monthly_activity:
+            return {
+                "period": {"month": "2026-07", "start": now, "end": now, "days_in_month": 31},
+                "events": [],
+                "roles": roles,
+                "assignments": assignments,
+                "source_counts": {},
+            }
+        return {
+            "period": {"month": "2026-07", "start": now, "end": now, "days_in_month": 31},
+            "chat_table": True,
+            "stage_table": True,
+            "finops_table": True,
+            "chat_rows": [],
+            "stage_rows": [],
+            "event_rows": [],
+            "action_rows": [],
+            "tenant_rows": [],
+            "budget_denies": 0,
+            "roles": roles,
+            "assignments": assignments,
+        }
+
+    monkeypatch.setattr(dashboard_api, "run_db", fake_run_db)
+
+    result = await dashboard_api.finops_summary(
+        month="2026-07",
+        principal=AdminPrincipal(scope="platform", tenant_id=None, email="priya@it.example"),
+    )
+
+    expected_platform_budget = hierarchy["platform_budget_monthly"]
+    assert result["summary"]["token_utilization"]["budget_tokens"] == expected_platform_budget
+    assert result["summary"]["budget_utilization"]["budget_tokens"] == expected_platform_budget
+    assert result["budget_governance"]["current_burn_tokens"] == 0
+    assert result["budget_governance"]["remaining_budget_tokens"] == expected_platform_budget
+    assert {
+        (row["tenant_id"], row["team_id"], row["role_id"]): row["monthly_token_budget"]
+        for row in result["budget_governance"]["daily_budgets"]
+    } == dict(hierarchy["tenant_team_role_budget_monthly"])
+    assert result["pie_charts"]["tenants"] == [
+        {
+            "label": "tenant-it",
+            "tokens": 0,
+            "used_tokens": 0,
+            "budget_tokens": hierarchy["tenant_budget_monthly"]["tenant-it"],
+            "requests": 0,
+            "usage_percent": 0,
+            "tenant_id": "tenant-it",
+        },
+        {
+            "label": "tenant-acmecp",
+            "tokens": 0,
+            "used_tokens": 0,
+            "budget_tokens": hierarchy["tenant_budget_monthly"]["tenant-acmecp"],
+            "requests": 0,
+            "usage_percent": 0,
+            "tenant_id": "tenant-acmecp",
+        },
     ]
 
 
