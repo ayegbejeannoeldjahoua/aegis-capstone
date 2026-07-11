@@ -576,6 +576,10 @@ async def policy_resolve(req: ResolveReq,
 @router.get("/finops/summary")
 async def finops_summary(month: str | None = None,
                           hours: int | None = Query(None, le=168),
+                          tenant: str | None = None,
+                          team: str | None = None,
+                          role: str | None = None,
+                          user: str | None = None,
                           principal: AdminPrincipal = Depends(admin_principal)):
     """Token, model-routing, and budget governance for the selected month.
 
@@ -584,6 +588,10 @@ async def finops_summary(month: str | None = None,
     """
     _ = hours
     period_start, period_end, month_key, days_in_month = _month_bounds(month)
+    selected_tenant = tenant or ""
+    selected_team = team or ""
+    selected_role = role or ""
+    selected_user = user or ""
 
     def _q():
         with get_conn() as conn:
@@ -594,6 +602,21 @@ async def finops_summary(month: str | None = None,
             chat_table = bool(conn.execute("SELECT to_regclass('public.dashboard_chat_metrics') AS t").fetchone()["t"])
             stage_table = bool(conn.execute("SELECT to_regclass('public.dashboard_stage_metrics') AS t").fetchone()["t"])
             finops_table = bool(conn.execute("SELECT to_regclass('public.finops_events') AS t").fetchone()["t"])
+            finops_has_team = False
+            finops_has_token_source = False
+            if finops_table:
+                finops_columns = {
+                    row["column_name"]
+                    for row in conn.execute(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema='public' AND table_name='finops_events'
+                        """
+                    ).fetchall()
+                }
+                finops_has_team = "team_id" in finops_columns
+                finops_has_token_source = "token_source" in finops_columns
             chat_rows = []
             if chat_table:
                 chat_rows = conn.execute(
@@ -618,11 +641,23 @@ async def finops_summary(month: str | None = None,
                 ).fetchall()
             event_rows = []
             if finops_table:
+                team_expr = "team_id" if finops_has_team else "NULL::text AS team_id"
+                token_source_expr = (
+                    "token_source"
+                    if finops_has_token_source
+                    else """
+                    CASE
+                      WHEN COALESCE(input_tokens, 0) > 0 OR COALESCE(output_tokens, 0) > 0 THEN 'provider'
+                      WHEN COALESCE(total_tokens, 0) > 0 THEN 'estimated'
+                      ELSE 'unmetered'
+                    END AS token_source
+                    """
+                )
                 event_rows = conn.execute(
                     f"""
                     SELECT id, created_at, trace_id, request_id, tenant_id, user_email,
-                           team_id, role, action, decision, provider, model, input_tokens,
-                           output_tokens, total_tokens, token_source, estimated_cost_usd, budget_limit_usd,
+                           {team_expr}, role, action, decision, provider, model, input_tokens,
+                           output_tokens, total_tokens, {token_source_expr}, estimated_cost_usd, budget_limit_usd,
                            budget_remaining_usd, budget_limit_tokens, budget_remaining_tokens,
                            budget_profile, reason, reached_model, blocked_before_model,
                            status, metadata
@@ -759,8 +794,11 @@ async def finops_summary(month: str | None = None,
 
     tokens_by_tenant: Counter[str] = Counter()
     tokens_by_team: Counter[str] = Counter()
+    tokens_by_tenant_team: Counter[tuple[str, str]] = Counter()
+    tokens_by_tenant_team_role: Counter[tuple[str, str, str]] = Counter()
     tokens_by_role: Counter[str] = Counter()
     tokens_by_user: Counter[str] = Counter()
+    tokens_by_user_key: Counter[tuple[str, str, str, str]] = Counter()
     tokens_by_role_key: Counter[tuple[str, str]] = Counter()
     tokens_by_hour: Counter[str] = Counter()
     token_source_counts: Counter[str] = Counter()
@@ -773,8 +811,11 @@ async def finops_summary(month: str | None = None,
     spend_by_provider: Counter[str] = Counter()
     requests_by_tenant: Counter[str] = Counter()
     requests_by_team: Counter[str] = Counter()
+    requests_by_tenant_team: Counter[tuple[str, str]] = Counter()
+    requests_by_tenant_team_role: Counter[tuple[str, str, str]] = Counter()
     requests_by_role: Counter[str] = Counter()
     requests_by_user: Counter[str] = Counter()
+    requests_by_user_key: Counter[tuple[str, str, str, str]] = Counter()
     requests_by_model: Counter[str] = Counter()
     requests_by_provider: Counter[str] = Counter()
     decision_counts: Counter[str] = Counter()
@@ -796,8 +837,11 @@ async def finops_summary(month: str | None = None,
 
         requests_by_tenant[tenant] += 1
         requests_by_team[team] += 1
+        requests_by_tenant_team[(tenant, team)] += 1
+        requests_by_tenant_team_role[(tenant, team, role)] += 1
         requests_by_role[role] += 1
         requests_by_user[user] += 1
+        requests_by_user_key[(tenant, team, role, user)] += 1
         if row.get("model"):
             requests_by_model[model] += 1
         if row.get("provider"):
@@ -807,8 +851,11 @@ async def finops_summary(month: str | None = None,
 
         tokens_by_tenant[tenant] += tokens
         tokens_by_team[team] += tokens
+        tokens_by_tenant_team[(tenant, team)] += tokens
+        tokens_by_tenant_team_role[(tenant, team, role)] += tokens
         tokens_by_role[role] += tokens
         tokens_by_user[user] += tokens
+        tokens_by_user_key[(tenant, team, role, user)] += tokens
         tokens_by_role_key[(tenant, role)] += tokens
         tokens_by_hour[hour] += tokens
         token_source_counts[str(token_source)] += 1
@@ -917,9 +964,12 @@ async def finops_summary(month: str | None = None,
         return [{key: k, "requests": int(v)} for k, v in counter.most_common()]
 
     user_budget_monthly: dict[str, int] = {}
+    user_budget_monthly_by_key: Counter[tuple[str, str, str, str]] = Counter()
     team_budget_monthly: Counter[str] = Counter()
+    tenant_team_budget_monthly: Counter[tuple[str, str]] = Counter()
     tenant_budget_monthly: Counter[str] = Counter()
     role_budget_monthly: Counter[str] = Counter()
+    tenant_team_role_budget_monthly: Counter[tuple[str, str, str]] = Counter()
     assignments = raw.get("assignments") or []
     for assignment in assignments:
         tenant = assignment.get("tenant_id")
@@ -930,9 +980,12 @@ async def finops_summary(month: str | None = None,
         monthly_budget = daily_budget * days_in_month if daily_budget else 0
         if monthly_budget:
             user_budget_monthly[email] = monthly_budget
+            user_budget_monthly_by_key[(tenant, team, role, email)] += monthly_budget
             team_budget_monthly[team] += monthly_budget
+            tenant_team_budget_monthly[(tenant, team)] += monthly_budget
             tenant_budget_monthly[tenant] += monthly_budget
             role_budget_monthly[role] += monthly_budget
+            tenant_team_role_budget_monthly[(tenant, team, role)] += monthly_budget
     for (tenant, role), daily_budget in role_budgets.items():
         if daily_budget and not any(a.get("tenant_id") == tenant and a.get("role_id") == role for a in assignments):
             monthly_budget = daily_budget * days_in_month
@@ -960,6 +1013,205 @@ async def finops_summary(month: str | None = None,
                 "budget_source": "derived_from_role_daily_budget" if budget else "not_configured",
             })
         return rows
+
+    def _filter_options() -> dict[str, list[dict[str, Any]]]:
+        tenants = {
+            str(item)
+            for item in set(tokens_by_tenant) | set(tenant_budget_monthly)
+            if item not in (None, "")
+        }
+        teams = {
+            (row.get("tenant_id"), row.get("team_id") or "unknown")
+            for row in assignments
+            if row.get("tenant_id")
+        } | set(tokens_by_tenant_team)
+        roles = {
+            (row.get("tenant_id"), row.get("team_id") or "unknown", row.get("role_id") or "unknown")
+            for row in assignments
+            if row.get("tenant_id")
+        } | set(tokens_by_tenant_team_role)
+        users = {
+            (
+                row.get("tenant_id"),
+                row.get("team_id") or "unknown",
+                row.get("role_id") or "unknown",
+                row.get("user_email") or "unknown",
+            )
+            for row in assignments
+            if row.get("tenant_id")
+        } | set(tokens_by_user_key)
+        for tenant_id, role_id in role_budgets:
+            tenants.add(str(tenant_id))
+            roles.add((tenant_id, "all", role_id))
+        return {
+            "tenants": [{"value": "", "label": "All tenants"}, *[
+                {"value": value, "label": value} for value in sorted(tenants)
+            ]],
+            "teams": [{"value": "", "label": "All teams"}, *[
+                {"value": f"{tenant_id}|{team_id}", "label": f"{tenant_id} / {team_id}", "tenant_id": tenant_id, "team_id": team_id}
+                for tenant_id, team_id in sorted(teams)
+            ]],
+            "roles": [{"value": "", "label": "All roles"}, *[
+                {
+                    "value": f"{tenant_id}|{team_id}|{role_id}",
+                    "label": f"{tenant_id} / {team_id} / {role_id}",
+                    "tenant_id": tenant_id,
+                    "team_id": team_id,
+                    "role_id": role_id,
+                }
+                for tenant_id, team_id, role_id in sorted(roles)
+            ]],
+            "users": [{"value": "", "label": "All users"}, *[
+                {
+                    "value": f"{tenant_id}|{team_id}|{role_id}|{email}",
+                    "label": email,
+                    "tenant_id": tenant_id,
+                    "team_id": team_id,
+                    "role_id": role_id,
+                    "user_email": email,
+                }
+                for tenant_id, team_id, role_id, email in sorted(users)
+            ]],
+        }
+
+    def _dimension_row(label: str, tokens: int, requests: int, budget: int, **extra: Any) -> dict[str, Any]:
+        return {
+            **extra,
+            "label": label,
+            "tokens": int(tokens or 0),
+            "used_tokens": int(tokens or 0),
+            "budget_tokens": int(budget or 0),
+            "requests": int(requests or 0),
+            "usage_percent": _pct(int(tokens or 0), int(budget or 0)) or 0,
+        }
+
+    def _tenant_rows() -> list[dict[str, Any]]:
+        labels = set(tokens_by_tenant) | set(requests_by_tenant) | set(tenant_budget_monthly)
+        return sorted(
+            [
+                _dimension_row(
+                    tenant_id,
+                    tokens_by_tenant.get(tenant_id, 0),
+                    requests_by_tenant.get(tenant_id, 0),
+                    tenant_budget_monthly.get(tenant_id, 0),
+                    tenant_id=tenant_id,
+                )
+                for tenant_id in labels
+            ],
+            key=lambda row: (row["tokens"], row["requests"], row["label"]),
+            reverse=True,
+        )
+
+    def _tenant_team_rows() -> list[dict[str, Any]]:
+        labels = set(tokens_by_tenant_team) | set(requests_by_tenant_team) | set(tenant_team_budget_monthly)
+        return sorted(
+            [
+                _dimension_row(
+                    f"{tenant_id} / {team_id}",
+                    tokens_by_tenant_team.get((tenant_id, team_id), 0),
+                    requests_by_tenant_team.get((tenant_id, team_id), 0),
+                    tenant_team_budget_monthly.get((tenant_id, team_id), 0),
+                    tenant_id=tenant_id,
+                    team_id=team_id,
+                )
+                for tenant_id, team_id in labels
+            ],
+            key=lambda row: (row["tokens"], row["requests"], row["label"]),
+            reverse=True,
+        )
+
+    def _tenant_team_role_rows() -> list[dict[str, Any]]:
+        labels = set(tokens_by_tenant_team_role) | set(requests_by_tenant_team_role) | set(tenant_team_role_budget_monthly)
+        return sorted(
+            [
+                _dimension_row(
+                    f"{tenant_id} / {team_id} / {role_id}",
+                    tokens_by_tenant_team_role.get((tenant_id, team_id, role_id), 0),
+                    requests_by_tenant_team_role.get((tenant_id, team_id, role_id), 0),
+                    tenant_team_role_budget_monthly.get((tenant_id, team_id, role_id), 0),
+                    tenant_id=tenant_id,
+                    team_id=team_id,
+                    role_id=role_id,
+                )
+                for tenant_id, team_id, role_id in labels
+            ],
+            key=lambda row: (row["tokens"], row["requests"], row["label"]),
+            reverse=True,
+        )
+
+    def _user_rows() -> list[dict[str, Any]]:
+        labels = set(tokens_by_user_key) | set(requests_by_user_key) | set(user_budget_monthly_by_key)
+        return sorted(
+            [
+                _dimension_row(
+                    email,
+                    tokens_by_user_key.get((tenant_id, team_id, role_id, email), 0),
+                    requests_by_user_key.get((tenant_id, team_id, role_id, email), 0),
+                    user_budget_monthly_by_key.get((tenant_id, team_id, role_id, email), 0),
+                    tenant_id=tenant_id,
+                    team_id=team_id,
+                    role_id=role_id,
+                    user_email=email,
+                )
+                for tenant_id, team_id, role_id, email in labels
+            ],
+            key=lambda row: (row["tokens"], row["requests"], row["label"]),
+            reverse=True,
+        )
+
+    tenant_chart_rows = _tenant_rows()
+    tenant_team_chart_rows = _tenant_team_rows()
+    tenant_team_role_chart_rows = _tenant_team_role_rows()
+    user_chart_rows = _user_rows()
+
+    def _matches(row: dict[str, Any]) -> bool:
+        if selected_tenant and row.get("tenant_id") != selected_tenant:
+            return False
+        if selected_team and row.get("team_id") != selected_team:
+            return False
+        if selected_role and row.get("role_id") != selected_role:
+            return False
+        if selected_user and row.get("user_email") != selected_user:
+            return False
+        return True
+
+    if selected_user:
+        bar_level = "user"
+        bar_rows = [row for row in user_chart_rows if _matches(row)]
+    elif selected_role:
+        bar_level = "user"
+        bar_rows = [row for row in user_chart_rows if _matches(row)]
+    elif selected_team:
+        bar_level = "tenant_team_role"
+        bar_rows = [row for row in tenant_team_role_chart_rows if _matches(row)]
+    elif selected_tenant:
+        bar_level = "tenant_team"
+        bar_rows = [row for row in tenant_team_chart_rows if _matches(row)]
+    else:
+        bar_level = "tenant"
+        bar_rows = tenant_chart_rows
+
+    notes: list[str] = []
+    if not activity_rows:
+        notes.append("No token usage recorded for this month yet.")
+    if activity_rows and not any(int(row.get("tokens_total") or 0) for row in activity_rows):
+        notes.append("Requests recorded, token metering unavailable or unmetered for this provider.")
+    if not total_budget:
+        notes.append("No token budgets are configured for the selected scope.")
+
+    analytics_summary = {
+        "token_utilization": {
+            "used_tokens": int(total_tokens or 0),
+            "budget_tokens": int(total_budget or 0),
+            "usage_percent": _pct(int(total_tokens or 0), int(total_budget or 0)) or 0,
+        },
+        "budget_utilization": {
+            "used_tokens": int(used_budget_tokens or 0),
+            "budget_tokens": int(total_budget or 0),
+            "usage_percent": budget_utilization or 0,
+        },
+        "budget_refusals": int(budget_refusals or 0),
+    }
 
     by_action = {
         r["action"]: {"count": int(r["n"]), "deny": int(r["deny"]), "cost_usd": None}
@@ -999,6 +1251,7 @@ async def finops_summary(month: str | None = None,
         },
         "hours": None,
         "summary": {
+            **analytics_summary,
             "requests_recorded": request_count,
             "model_routed_requests": model_routed_requests,
             "tokens_today": total_tokens,
@@ -1012,6 +1265,24 @@ async def finops_summary(month: str | None = None,
             "projected_monthly_spend": projected_monthly_spend,
             "metering_notice": metering_notice,
         },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pie_charts": {
+            "tenants": tenant_chart_rows,
+            "tenant_teams": tenant_team_chart_rows,
+            "tenant_team_roles": tenant_team_role_chart_rows,
+        },
+        "filters": _filter_options(),
+        "bar_chart": {
+            "level": bar_level,
+            "rows": bar_rows,
+            "selected": {
+                "tenant": selected_tenant,
+                "team": selected_team,
+                "role": selected_role,
+                "user": selected_user,
+            },
+        },
+        "notes": notes,
         "breakdowns": {
             "by_tenant": _cost_rows(spend_by_tenant, "tenant_id") if cost_available else [],
             "by_role": _cost_rows(spend_by_role, "role_id") if cost_available else [],

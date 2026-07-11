@@ -44,11 +44,6 @@ export default function Dashboard() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-lg font-semibold text-slate-100">Dashboard</h1>
-            <div className="text-xs text-slate-500">
-              {metrics?.scope?.admin_scope === "tenant" ? `Tenant scope: ${metrics.scope.tenant_id}` : "Platform scope"}
-              {metrics?.period?.month ? ` · ${metrics.period.month} month-to-date` : ""}
-              {metrics?.generated_at ? ` · generated ${new Date(metrics.generated_at).toLocaleTimeString()}` : ""}
-            </div>
           </div>
           <input
             type="month"

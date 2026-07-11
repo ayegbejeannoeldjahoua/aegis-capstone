@@ -45,6 +45,59 @@ async def test_finops_summary_does_not_fake_budget_burn_without_chat_metrics(mon
     assert budget["budget_refusal_count"] == 2
     assert budget["event_count"] == 0
     assert result["summary"]["requests_recorded"] == 0
+    assert result["summary"]["token_utilization"] == {
+        "used_tokens": 0,
+        "budget_tokens": 0,
+        "usage_percent": 0,
+    }
+    assert result["summary"]["budget_utilization"] == {
+        "used_tokens": 0,
+        "budget_tokens": 0,
+        "usage_percent": 0,
+    }
+    assert result["filters"]["tenants"][0] == {"value": "", "label": "All tenants"}
+    assert result["bar_chart"]["level"] == "tenant"
+
+
+@pytest.mark.asyncio
+async def test_finops_summary_returns_empty_analytics_contract_without_rows(monkeypatch):
+    async def fake_run_db(_fn):
+        return {
+            "period": {"month": "2026-07", "start": None, "end": None, "days_in_month": 31},
+            "chat_table": True,
+            "stage_table": True,
+            "finops_table": True,
+            "chat_rows": [],
+            "stage_rows": [],
+            "event_rows": [],
+            "action_rows": [],
+            "tenant_rows": [],
+            "budget_denies": 0,
+            "roles": [],
+            "assignments": [],
+        }
+
+    monkeypatch.setattr(dashboard_api, "run_db", fake_run_db)
+
+    result = await dashboard_api.finops_summary(
+        month="2026-07",
+        principal=AdminPrincipal(scope="platform", tenant_id=None, email="priya@it.example"),
+    )
+
+    assert result["summary"]["token_utilization"] == {"used_tokens": 0, "budget_tokens": 0, "usage_percent": 0}
+    assert result["summary"]["budget_utilization"] == {"used_tokens": 0, "budget_tokens": 0, "usage_percent": 0}
+    assert result["summary"]["budget_refusals"] == 0
+    assert result["pie_charts"] == {"tenants": [], "tenant_teams": [], "tenant_team_roles": []}
+    assert result["filters"]["tenants"] == [{"value": "", "label": "All tenants"}]
+    assert result["bar_chart"] == {
+        "level": "tenant",
+        "rows": [],
+        "selected": {"tenant": "", "team": "", "role": "", "user": ""},
+    }
+    assert result["notes"] == [
+        "No token usage recorded for this month yet.",
+        "No token budgets are configured for the selected scope.",
+    ]
 
 
 @pytest.mark.asyncio

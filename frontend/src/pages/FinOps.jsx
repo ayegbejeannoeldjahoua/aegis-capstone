@@ -171,6 +171,66 @@ function TokenBreakdown({ tokens }) {
   );
 }
 
+function AnalyticsPiePanel({ title, rows }) {
+  return (
+    <Panel title={title}>
+      <TokenPie rows={rows} labelKey="label" />
+      <div className="mt-2 space-y-1">
+        {(rows || []).slice(0, 4).map((row) => (
+          <div key={row.label} className="flex items-center justify-between gap-3 text-xs text-slate-500">
+            <span className="truncate">{row.label}</span>
+            <span className="font-mono text-slate-300">{compact(row.tokens)}</span>
+          </div>
+        ))}
+        {(!rows || rows.length === 0) && <div className="text-xs text-slate-500">No token usage recorded</div>}
+      </div>
+    </Panel>
+  );
+}
+
+function FilterSelect({ label, value, options, onChange }) {
+  return (
+    <label className="flex min-w-0 flex-col gap-1 text-xs text-slate-500">
+      <span>{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200"
+      >
+        {(options || [{ value: "", label: `All ${label.toLowerCase()}` }]).map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function HorizontalTokenBars({ chart, chartTheme }) {
+  const rows = (chart?.rows || []).slice(0, 12);
+  const height = Math.max(220, rows.length * 42);
+  return (
+    <Panel title="Selected token usage vs budget">
+      <div className="mb-3 text-xs text-slate-500">Level: {String(chart?.level || "tenant").replaceAll("_", " ")}</div>
+      {rows.length ? (
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 20, left: 24, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+              <XAxis type="number" stroke={chartTheme.axis} fontSize={11} />
+              <YAxis type="category" dataKey="label" stroke={chartTheme.axis} fontSize={11} width={150} />
+              <Tooltip contentStyle={chartTheme.tooltip} formatter={(value) => compact(value)} />
+              <Bar dataKey="budget_tokens" name="Budget" fill="var(--chart-deny)" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="tokens" name="Usage" fill={chartTheme.bar} radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div className="flex h-48 items-center justify-center text-sm text-slate-500">No token usage or budget rows for this selection</div>
+      )}
+    </Panel>
+  );
+}
+
 function RecentFinOpsEvents({ events }) {
   return (
     <Panel title="Recent FinOps events">
@@ -218,12 +278,16 @@ export default function FinOps() {
   const chart = chartTheme(theme);
   const [summary, setSummary] = useState(null);
   const [month, setMonth] = useState(currentMonthKey());
+  const [filters, setFilters] = useState({ tenant: "", team: "", role: "", user: "" });
   const [err, setErr] = useState("");
 
-  async function load(targetMonth = month) {
+  async function load(targetMonth = month, targetFilters = filters) {
     setErr("");
     try {
       const qs = new URLSearchParams({ month: targetMonth });
+      Object.entries(targetFilters || {}).forEach(([key, value]) => {
+        if (value) qs.set(key, value);
+      });
       const data = await api(`/admin/finops/summary?${qs.toString()}`);
       setSummary(data);
     } catch (e) {
@@ -231,11 +295,52 @@ export default function FinOps() {
     }
   }
 
-  useEffect(() => { load(month); }, [month]);
+  useEffect(() => { load(month, filters); }, [month, filters]);
+
+  function setTenantFilter(value) {
+    setFilters({ tenant: value, team: "", role: "", user: "" });
+  }
+
+  function setTeamFilter(value) {
+    if (!value) {
+      setFilters((current) => ({ ...current, team: "", role: "", user: "" }));
+      return;
+    }
+    const [tenantId, teamId] = value.split("|");
+    setFilters({ tenant: tenantId || "", team: teamId || "", role: "", user: "" });
+  }
+
+  function setRoleFilter(value) {
+    if (!value) {
+      setFilters((current) => ({ ...current, role: "", user: "" }));
+      return;
+    }
+    const [tenantId, teamId, roleId] = value.split("|");
+    setFilters({ tenant: tenantId || "", team: teamId === "all" ? "" : (teamId || ""), role: roleId || "", user: "" });
+  }
+
+  function setUserFilter(value) {
+    if (!value) {
+      setFilters((current) => ({ ...current, user: "" }));
+      return;
+    }
+    const [tenantId, teamId, roleId, ...emailParts] = value.split("|");
+    setFilters({
+      tenant: tenantId || "",
+      team: teamId || "",
+      role: roleId || "",
+      user: emailParts.join("|") || "",
+    });
+  }
 
   const fin = summary?.summary || {};
+  const tokenUtilization = fin.token_utilization || {};
+  const budgetUtilization = fin.budget_utilization || {};
   const tokens = summary?.token_breakdown || {};
   const budgets = summary?.budget_governance || {};
+  const pieCharts = summary?.pie_charts || {};
+  const filterOptions = summary?.filters || {};
+  const barChart = summary?.bar_chart || {};
   const budgetRows = budgets.daily_budgets || [];
   const meteringNotice = fin.metering_notice;
   const budgetEmpty = budgets.event_count
@@ -277,9 +382,10 @@ export default function FinOps() {
         <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
           {available(fin.requests_recorded) && <MetricCard title="Requests recorded" value={fin.requests_recorded} icon={Activity} color="blue" />}
           {available(fin.model_routed_requests) && <MetricCard title="Model routed" value={fin.model_routed_requests} icon={Gauge} color="violet" />}
-          {available(fin.tokens_month_to_date ?? fin.tokens_today) && <MetricCard title="Tokens month-to-date" value={fin.tokens_month_to_date ?? fin.tokens_today} icon={Hash} color="blue" />}
-          {available(fin.budget_utilization_pct) && <MetricCard title="Budget utilization" value={fin.budget_utilization_pct} unit="%" icon={Gauge} color={fin.budget_utilization_pct > 85 ? "rose" : fin.budget_utilization_pct > 60 ? "amber" : "emerald"} />}
-          {available(fin.budget_refusals) && <MetricCard title="Budget refusals" value={fin.budget_refusals} icon={ShieldX} color="amber" />}
+          <MetricCard title="Tokens month-to-date" value={tokenUtilization.used_tokens ?? fin.tokens_month_to_date ?? fin.tokens_today ?? 0} icon={Hash} color="blue" />
+          <MetricCard title="Token utilization" value={tokenUtilization.usage_percent ?? 0} unit="%" icon={Gauge} color={(tokenUtilization.usage_percent || 0) > 85 ? "rose" : (tokenUtilization.usage_percent || 0) > 60 ? "amber" : "emerald"} />
+          <MetricCard title="Budget utilization" value={budgetUtilization.usage_percent ?? fin.budget_utilization_pct ?? 0} unit="%" icon={Gauge} color={(budgetUtilization.usage_percent || 0) > 85 ? "rose" : (budgetUtilization.usage_percent || 0) > 60 ? "amber" : "emerald"} />
+          <MetricCard title="Budget refusals" value={fin.budget_refusals ?? 0} icon={ShieldX} color="amber" />
           {available(budgets.unmetered_count) && <MetricCard title="Unmetered requests" value={budgets.unmetered_count} icon={Activity} color="violet" />}
         </div>
         {meteringNotice && (
@@ -289,6 +395,29 @@ export default function FinOps() {
         )}
         {sourceCounts && <div className="text-xs text-slate-500">{sourceCounts}</div>}
       </section>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <AnalyticsPiePanel title="Token usage across tenants" rows={pieCharts.tenants} />
+        <AnalyticsPiePanel title="Token usage across tenant-teams" rows={pieCharts.tenant_teams} />
+        <AnalyticsPiePanel title="Token usage across tenant-team-roles" rows={pieCharts.tenant_team_roles} />
+      </div>
+
+      <section className="rounded-2xl border border-slate-700/60 bg-slate-800/70 p-5">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <FilterSelect label="Tenant" value={filters.tenant} options={filterOptions.tenants} onChange={setTenantFilter} />
+          <FilterSelect label="Team" value={filters.team ? `${filters.tenant}|${filters.team}` : ""} options={filterOptions.teams} onChange={setTeamFilter} />
+          <FilterSelect label="Role" value={filters.role ? `${filters.tenant}|${filters.team || "all"}|${filters.role}` : ""} options={filterOptions.roles} onChange={setRoleFilter} />
+          <FilterSelect label="Individual/User" value={filters.user ? `${filters.tenant}|${filters.team}|${filters.role}|${filters.user}` : ""} options={filterOptions.users} onChange={setUserFilter} />
+        </div>
+      </section>
+
+      <HorizontalTokenBars chart={barChart} chartTheme={chart} />
+
+      {(summary?.notes || []).length > 0 && (
+        <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-sm text-slate-400">
+          {(summary.notes || []).join(" ")}
+        </div>
+      )}
 
       <BudgetGovernance budgets={budgets} fin={fin} budgetRows={budgetRows} budgetEmpty={budgetEmpty} />
 
@@ -330,8 +459,6 @@ export default function FinOps() {
           </div>
         </Panel>
       </div>
-
-      <TokenBreakdown tokens={tokens} />
 
       <RecentFinOpsEvents events={summary?.recent_events || []} />
     </div>
